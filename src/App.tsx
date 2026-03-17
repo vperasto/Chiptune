@@ -84,6 +84,7 @@ export default function App() {
   const [renamingIndex, setRenamingIndex] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [mutedChannels, setMutedChannels] = useState<boolean[]>([false, false, false, false]);
+  const [audioState, setAudioState] = useState<string>('uninitialized');
 
   const timerRef = useRef<number | null>(null);
   const nextNoteTimeRef = useRef(0);
@@ -174,6 +175,12 @@ export default function App() {
     if (!isPlaying) return;
 
     const currentSong = songRef.current;
+    
+    // Safety check: if we're way behind, jump to current time to avoid catch-up burst
+    if (nextNoteTimeRef.current < audioEngine.currentTime - 0.5) {
+      nextNoteTimeRef.current = audioEngine.currentTime;
+    }
+
     while (nextNoteTimeRef.current < audioEngine.currentTime + 0.1) {
       scheduleNote(stepRef.current, sectionRef.current, nextNoteTimeRef.current);
       
@@ -231,15 +238,27 @@ export default function App() {
     };
   }, [isPlaying, scheduler]);
 
-  const togglePlay = () => setIsPlaying(!isPlaying);
+  const togglePlay = () => {
+    audioEngine.resume();
+    setIsPlaying(!isPlaying);
+  };
 
   const stopPlayback = () => {
+    audioEngine.resume();
     setIsPlaying(false);
     setCurrentStep(0);
     setCurrentSectionIndex(0);
     stepRef.current = 0;
     sectionRef.current = 0;
   };
+
+  // Monitor audio state
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setAudioState(audioEngine.state);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (toast) {
@@ -490,6 +509,15 @@ export default function App() {
               />
             </div>
             <div className="flex flex-wrap gap-2 md:gap-3">
+              {audioState === 'suspended' && (
+                <EInkButton 
+                  onClick={() => audioEngine.resume()} 
+                  className="flex items-center justify-center p-2 bg-red-100 border-red-500 text-red-600 animate-pulse"
+                  title="Fix Audio (Browser blocked sound)"
+                >
+                  <VolumeX size={20} /> <span className="ml-2 text-[10px]">FIX AUDIO</span>
+                </EInkButton>
+              )}
               <EInkButton onClick={togglePlay} className="flex items-center justify-center p-2" title={isPlaying ? "Pause" : "Play"}>
                 {isPlaying ? <div className="w-4 h-4 border-l-4 border-r-4 border-black" /> : <Play size={20} fill="currentColor" />}
               </EInkButton>

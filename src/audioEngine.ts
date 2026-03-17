@@ -11,14 +11,23 @@ class AudioEngine {
 
   private initContext() {
     if (!this.ctx) {
-      this.ctx = new AudioContext();
-      this.masterGain = this.ctx.createGain();
-      this.masterGain.connect(this.ctx.destination);
-      this.noiseBuffer = this.createNoiseBuffer();
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        this.ctx = new AudioContextClass();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.connect(this.ctx.destination);
+        this.noiseBuffer = this.createNoiseBuffer();
+      } catch (e) {
+        console.error("AudioContext initialization failed", e);
+      }
     }
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(e => console.error("Failed to resume AudioContext", e));
     }
+  }
+
+  public get state() {
+    return this.ctx?.state || 'uninitialized';
   }
 
   private createNoiseBuffer(): AudioBuffer {
