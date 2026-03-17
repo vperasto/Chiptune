@@ -1,0 +1,5 @@
+{
+  "name": "Chiptune Sequencer & Tracker (E-ink Edition)",
+  "description": "An advanced Web Audio API-based chiptune sequencer with an E-paper aesthetic, featuring 4 channels, ADSR envelopes, and complex percussion mapping.",
+  "requestFramePermissions": []
+}
