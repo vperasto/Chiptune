@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check, Volume2, VolumeX } from 'lucide-react';
+import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check, Volume2, VolumeX, Code } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PHANTOM_CIRCUIT, SongData, Section } from './types';
 import { audioEngine } from './audioEngine';
@@ -53,6 +53,63 @@ const EInkInput = ({
   />
 );
 
+export const sanitizeSongData = (imported: any): SongData => {
+  const sanitized: any = { ...imported };
+
+  if (imported.perc && !imported.perc_types) {
+    sanitized.perc_types = imported.perc;
+  }
+
+  if (!sanitized.note_frequencies_hz) {
+    sanitized.note_frequencies_hz = { ...PHANTOM_CIRCUIT.note_frequencies_hz };
+  }
+  
+  const freqs = sanitized.note_frequencies_hz;
+  const sharps: Record<string, string> = { "C#": "Db", "D#": "Eb", "F#": "Gb", "G#": "Ab", "A#": "Bb" };
+  Object.entries(sharps).forEach(([sharp, flat]) => {
+    if (!freqs[sharp] && freqs[flat]) freqs[sharp] = freqs[flat];
+    if (!freqs[flat] && freqs[sharp]) freqs[flat] = freqs[sharp];
+  });
+
+  if (!sanitized.step_duration_ms && sanitized.tempo) {
+    sanitized.step_duration_ms = Math.round((60000 / sanitized.tempo) / 4);
+  }
+
+  if (Array.isArray(sanitized.sections)) {
+    sanitized.sections = sanitized.sections.map((sec: any) => ({
+      ...sec,
+      type: sec.type || 'normal',
+      volume_scale: sec.volume_scale ?? 1,
+      rows: sec.rows || []
+    }));
+  }
+
+  if (sanitized.channels) {
+    Object.keys(sanitized.channels).forEach(key => {
+      if (!sanitized.channels[key].envelope) {
+        sanitized.channels[key].envelope = { attack_ms: 5, release_at: 0.5 };
+      }
+    });
+  }
+
+  if (sanitized.perc_types) {
+    Object.keys(sanitized.perc_types).forEach(key => {
+      const p = sanitized.perc_types[key];
+      if (Object.keys(p).length === 0 && key !== '-') {
+        if (key === 'K') {
+          sanitized.perc_types[key] = { type: 'sine', frequency_hz: 60, volume: 0.8, duration_ms: 150 };
+        } else if (key === 'H') {
+          sanitized.perc_types[key] = { type: 'noise', filter: 'highpass', filter_hz: 7000, volume: 0.1, duration_ms: 50 };
+        } else if (key === 'S') {
+          sanitized.perc_types[key] = { type: 'noise', filter: 'bandpass', filter_hz: 1500, volume: 0.3, duration_ms: 100 };
+        }
+      }
+    });
+  }
+
+  return sanitized;
+};
+
 export default function App() {
   const [song, setSong] = useState<SongData>(() => {
     const saved = localStorage.getItem('phantom_circuit_current_song');
@@ -75,8 +132,10 @@ export default function App() {
   const [currentStep, setCurrentStep] = useState(0);
   const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
   const [library, setLibrary] = useState<SongData[]>([]);
-  const [showImport, setShowImport] = useState(false);
-  const [importText, setImportText] = useState('');
+  const [showJsonEditor, setShowJsonEditor] = useState(false);
+  const [jsonText, setJsonText] = useState('');
+  const [jsonError, setJsonError] = useState('');
+  const isEditingJson = useRef(false);
   const [showInfo, setShowInfo] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -281,79 +340,22 @@ export default function App() {
     }
   };
 
-  const handleImport = () => {
+  // Sync JSON editor with song state
+  useEffect(() => {
+    if (!isEditingJson.current) {
+      setJsonText(JSON.stringify(song, null, 2));
+    }
+  }, [song]);
+
+  const handleJsonChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newText = e.target.value;
+    setJsonText(newText);
     try {
-      const imported = JSON.parse(importText);
-      
-      // Sanitize and fix on the fly
-      const sanitized: any = { ...imported };
-
-      // Handle "perc" vs "perc_types"
-      if (imported.perc && !imported.perc_types) {
-        sanitized.perc_types = imported.perc;
-      }
-
-      // Ensure note frequencies exist
-      if (!sanitized.note_frequencies_hz) {
-        sanitized.note_frequencies_hz = { ...PHANTOM_CIRCUIT.note_frequencies_hz };
-      }
-      
-      // Add sharp equivalents if missing
-      const freqs = sanitized.note_frequencies_hz;
-      const sharps: Record<string, string> = { "C#": "Db", "D#": "Eb", "F#": "Gb", "G#": "Ab", "A#": "Bb" };
-      Object.entries(sharps).forEach(([sharp, flat]) => {
-        if (!freqs[sharp] && freqs[flat]) freqs[sharp] = freqs[flat];
-        if (!freqs[flat] && freqs[sharp]) freqs[flat] = freqs[sharp];
-      });
-
-      // Ensure step duration
-      if (!sanitized.step_duration_ms && sanitized.tempo) {
-        sanitized.step_duration_ms = Math.round((60000 / sanitized.tempo) / 4);
-      }
-
-      // Ensure sections are robust
-      if (Array.isArray(sanitized.sections)) {
-        sanitized.sections = sanitized.sections.map((sec: any) => ({
-          ...sec,
-          type: sec.type || 'normal',
-          volume_scale: sec.volume_scale ?? 1,
-          rows: sec.rows || []
-        }));
-      }
-
-      // Ensure channels have envelopes
-      if (sanitized.channels) {
-        Object.keys(sanitized.channels).forEach(key => {
-          if (!sanitized.channels[key].envelope) {
-            sanitized.channels[key].envelope = { attack_ms: 5, release_at: 0.5 };
-          }
-        });
-      }
-
-      // Ensure percussion types are robust and have defaults
-      if (sanitized.perc_types) {
-        Object.keys(sanitized.perc_types).forEach(key => {
-          const p = sanitized.perc_types[key];
-          if (Object.keys(p).length === 0 && key !== '-') {
-            // Smart defaults based on common keys
-            if (key === 'K') { // Kick
-              sanitized.perc_types[key] = { type: 'sine', frequency_hz: 60, volume: 0.8, duration_ms: 150 };
-            } else if (key === 'H') { // Hi-hat
-              sanitized.perc_types[key] = { type: 'noise', filter: 'highpass', filter_hz: 7000, volume: 0.1, duration_ms: 50 };
-            } else if (key === 'S') { // Snare
-              sanitized.perc_types[key] = { type: 'noise', filter: 'bandpass', filter_hz: 1500, volume: 0.3, duration_ms: 100 };
-            }
-          }
-        });
-      }
-
-      setSong(sanitized);
-      setShowImport(false);
-      setImportText('');
-      setCurrentStep(0);
-      setCurrentSectionIndex(0);
-    } catch (e) {
-      alert("Virheellinen JSON-rakenne: " + (e instanceof Error ? e.message : "Tuntematon virhe"));
+      const parsed = JSON.parse(newText);
+      setJsonError('');
+      setSong(sanitizeSongData(parsed));
+    } catch (err: any) {
+      setJsonError(err.message);
     }
   };
 
@@ -532,8 +534,13 @@ export default function App() {
               >
                 <Plus size={20} className={isLoopingSection ? "rotate-45 transition-transform" : "transition-transform"} />
               </EInkButton>
-              <EInkButton onClick={() => setShowImport(true)} className="flex items-center justify-center p-2" title="Import">
-                <Upload size={20} />
+              <EInkButton 
+                onClick={() => setShowJsonEditor(!showJsonEditor)} 
+                active={showJsonEditor}
+                className="flex items-center justify-center p-2" 
+                title="JSON Editor"
+              >
+                <Code size={20} />
               </EInkButton>
               <EInkButton onClick={exportSong} className="flex items-center justify-center p-2" title="Export">
                 <Download size={20} />
@@ -617,8 +624,8 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden p-4 md:p-6">
-        <div className="max-w-7xl mx-auto h-full">
+      <main className="flex-1 overflow-hidden p-4 md:p-6 flex gap-4">
+        <div className={`h-full transition-all duration-300 ${showJsonEditor ? 'w-2/3' : 'w-full max-w-7xl mx-auto'}`}>
           {/* Tracker Grid */}
           <div className="border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden flex flex-col h-full">
             <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr] border-b-4 border-black bg-black text-white font-bold text-xs uppercase sticky top-0 z-30">
@@ -774,33 +781,35 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {showJsonEditor && (
+          <div className="w-1/3 h-full flex flex-col border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden transition-all duration-300">
+            <div className="bg-black text-white p-2 font-bold uppercase flex justify-between items-center text-xs">
+              <span className="flex items-center gap-2"><Code size={14} /> JSON Editor</span>
+              <button onClick={() => setShowJsonEditor(false)} className="hover:text-red-400 transition-colors">✕</button>
+            </div>
+            <textarea
+              className="flex-1 p-4 font-mono text-xs resize-none outline-none custom-scrollbar bg-[#f4f4f2]"
+              value={jsonText}
+              onChange={handleJsonChange}
+              onFocus={() => isEditingJson.current = true}
+              onBlur={() => {
+                isEditingJson.current = false;
+                setJsonText(JSON.stringify(song, null, 2));
+              }}
+              spellCheck={false}
+            />
+            {jsonError && (
+              <div className="bg-red-100 text-red-600 p-2 text-xs border-t-4 border-black font-bold">
+                {jsonError}
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {/* Modals */}
       <AnimatePresence>
-        {showImport && (
-          <motion.div 
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-              className="bg-[#f4f4f2] border-4 border-black p-8 max-w-2xl w-full shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]"
-            >
-              <h2 className="text-2xl font-black uppercase mb-4">Import JSON</h2>
-              <textarea
-                value={importText}
-                onChange={(e) => setImportText(e.target.value)}
-                placeholder="Paste your song JSON here..."
-                className="w-full h-64 bg-white border-2 border-black p-4 font-mono text-xs focus:outline-none mb-6 custom-scrollbar"
-              />
-              <div className="flex justify-end gap-4">
-                <EInkButton onClick={() => setShowImport(false)} className="border-none shadow-none hover:translate-x-0 hover:translate-y-0 opacity-50">CANCEL</EInkButton>
-                <EInkButton onClick={handleImport}>LOAD SONG</EInkButton>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
 
         {showInfo && (
           <motion.div 

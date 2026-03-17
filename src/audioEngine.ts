@@ -54,16 +54,32 @@ class AudioEngine {
 
     const actualFreq = freq * (config.octave_multiplier || 1);
     const env = config.envelope;
-    const attack = env.attack_ms / 1000;
-    const release = (env.release_at || 0.1) * (durationMs / 1000);
+    const durationSec = durationMs / 1000;
+    
+    // Ensure attack is at least 1ms to prevent instant jump errors
+    const attack = Math.max((env.attack_ms || 1) / 1000, 0.001);
+    // Ensure release is at least 1ms
+    const release = Math.max((env.release_at || 0.1) * durationSec, 0.001);
     const sustainLevel = env.sustain_level ?? 0.5;
-    const totalVolume = config.volume * volumeScale;
+    const totalVolume = Math.max(config.volume * volumeScale, 0);
+
+    // Calculate strict strictly increasing times
+    const attackTime = startTime + attack;
+    const releaseStartTime = Math.max(attackTime, startTime + durationSec - release);
+    const endTime = Math.max(releaseStartTime, startTime + durationSec);
 
     // Envelope
     gain.gain.setValueAtTime(0, startTime);
-    gain.gain.linearRampToValueAtTime(totalVolume, startTime + attack);
-    gain.gain.setValueAtTime(totalVolume * sustainLevel, startTime + (durationMs / 1000) - release);
-    gain.gain.linearRampToValueAtTime(0, startTime + (durationMs / 1000));
+    gain.gain.linearRampToValueAtTime(totalVolume, attackTime);
+    
+    // Decay to sustain level
+    const decay = env.decay_ratio ? env.decay_ratio * durationSec : 0.1;
+    const decayTime = Math.min(attackTime + decay, releaseStartTime);
+    gain.gain.linearRampToValueAtTime(totalVolume * sustainLevel, decayTime);
+    
+    // Hold sustain level until release
+    gain.gain.setValueAtTime(totalVolume * sustainLevel, releaseStartTime);
+    gain.gain.linearRampToValueAtTime(0, endTime);
 
     if (config.type === 'noise') {
       const source = ctx.createBufferSource();
@@ -71,14 +87,14 @@ class AudioEngine {
       source.loop = true;
       source.connect(gain);
       source.start(startTime);
-      source.stop(startTime + (durationMs / 1000));
+      source.stop(endTime);
     } else {
       const osc = ctx.createOscillator();
       osc.type = config.type as OscillatorType;
       osc.frequency.setValueAtTime(actualFreq, startTime);
       osc.connect(gain);
       osc.start(startTime);
-      osc.stop(startTime + (durationMs / 1000));
+      osc.stop(endTime);
     }
   }
 
