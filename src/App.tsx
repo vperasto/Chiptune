@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check } from 'lucide-react';
+import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PHANTOM_CIRCUIT, SongData, Section } from './types';
 import { audioEngine } from './audioEngine';
@@ -9,17 +9,20 @@ const EInkButton = ({
   onClick, 
   className = "", 
   active = false,
-  disabled = false 
+  disabled = false,
+  title
 }: { 
   children: React.ReactNode; 
   onClick?: () => void; 
   className?: string;
   active?: boolean;
   disabled?: boolean;
+  title?: string;
 }) => (
   <button
     onClick={onClick}
     disabled={disabled}
+    title={title}
     className={`
       px-4 py-2 border-2 border-black font-bold transition-all
       ${active ? 'bg-black text-[#f4f4f2]' : 'bg-[#f4f4f2] text-[#1a1a1a]'}
@@ -80,6 +83,7 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
   const [renamingIndex, setRenamingIndex] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [mutedChannels, setMutedChannels] = useState<boolean[]>([false, false, false, false]);
 
   const timerRef = useRef<number | null>(null);
   const nextNoteTimeRef = useRef(0);
@@ -138,7 +142,7 @@ export default function App() {
 
     // Schedule notes for the first 3 columns (Melodic channels)
     for (let i = 0; i < 3; i++) {
-      if (row[i] !== '-' && channelKeys[i]) {
+      if (row[i] !== '-' && channelKeys[i] && !mutedChannels[i]) {
         const freq = song.note_frequencies_hz[row[i]];
         const channelConfig = song.channels[channelKeys[i]];
         if (freq && channelConfig) {
@@ -148,13 +152,13 @@ export default function App() {
     }
 
     // Schedule percussion for the 4th column
-    if (row[3] !== '-') {
+    if (row[3] !== '-' && !mutedChannels[3]) {
       const perc = song.perc_types[row[3]];
       if (perc) {
         audioEngine.playPercussion(perc, time, song, volumeScale);
       }
     }
-  }, [song]);
+  }, [song, mutedChannels]);
 
   const songRef = useRef(song);
   useEffect(() => {
@@ -471,6 +475,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-40 mb-1">Chip-Tune</div>
               <input
                 className="text-3xl md:text-4xl font-black uppercase tracking-tighter mb-1 bg-transparent border-none outline-none w-full focus:ring-2 focus:ring-black/10"
                 value={song.name}
@@ -485,35 +490,36 @@ export default function App() {
               />
             </div>
             <div className="flex flex-wrap gap-2 md:gap-3">
-              <EInkButton onClick={togglePlay} className="flex items-center gap-2 min-w-[100px] justify-center">
-                {isPlaying ? <div className="flex items-center gap-2"><div className="w-4 h-4 border-l-4 border-r-4 border-black" /> PAUSE</div> : <div className="flex items-center gap-2"><Play size={20} fill="currentColor" /> PLAY</div>}
+              <EInkButton onClick={togglePlay} className="flex items-center justify-center p-2" title={isPlaying ? "Pause" : "Play"}>
+                {isPlaying ? <div className="w-4 h-4 border-l-4 border-r-4 border-black" /> : <Play size={20} fill="currentColor" />}
               </EInkButton>
-              <EInkButton onClick={stopPlayback} className="flex items-center gap-2">
-                <Stop size={20} fill="currentColor" /> STOP
+              <EInkButton onClick={stopPlayback} className="flex items-center justify-center p-2" title="Stop">
+                <Stop size={20} fill="currentColor" />
               </EInkButton>
               <EInkButton 
                 onClick={() => setIsLoopingSection(!isLoopingSection)} 
                 active={isLoopingSection}
-                className="flex items-center gap-2"
+                className="flex items-center justify-center p-2"
+                title="Loop Section"
               >
-                <Plus size={20} className={isLoopingSection ? "rotate-45 transition-transform" : "transition-transform"} /> LOOP SECTION
+                <Plus size={20} className={isLoopingSection ? "rotate-45 transition-transform" : "transition-transform"} />
               </EInkButton>
-              <EInkButton onClick={() => setShowImport(true)} className="flex items-center gap-2">
-                <Upload size={20} /> IMPORT
+              <EInkButton onClick={() => setShowImport(true)} className="flex items-center justify-center p-2" title="Import">
+                <Upload size={20} />
               </EInkButton>
-              <EInkButton onClick={exportSong} className="flex items-center gap-2">
-                <Download size={20} /> EXPORT
+              <EInkButton onClick={exportSong} className="flex items-center justify-center p-2" title="Export">
+                <Download size={20} />
               </EInkButton>
-              <EInkButton onClick={saveToLibrary} className="flex items-center gap-2">
-                <Save size={20} /> SAVE
+              <EInkButton onClick={saveToLibrary} className="flex items-center justify-center p-2" title="Save">
+                <Save size={20} />
               </EInkButton>
-              <EInkButton onClick={() => setShowLibrary(true)} className="flex items-center gap-2">
-                <LibraryIcon size={20} /> LIBRARY
+              <EInkButton onClick={() => setShowLibrary(true)} className="flex items-center justify-center p-2" title="Library">
+                <LibraryIcon size={20} />
               </EInkButton>
-              <EInkButton onClick={toggleFullScreen} className="p-2">
+              <EInkButton onClick={toggleFullScreen} className="p-2" title="Fullscreen">
                 {isFullScreen ? <Minimize size={20} /> : <Maximize size={20} />}
               </EInkButton>
-              <EInkButton onClick={() => setShowInfo(!showInfo)} className="p-2" active={showInfo}>
+              <EInkButton onClick={() => setShowInfo(!showInfo)} className="p-2" active={showInfo} title="Info">
                 <Info size={20} />
               </EInkButton>
             </div>
@@ -589,10 +595,36 @@ export default function App() {
           <div className="border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden flex flex-col h-full">
             <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr] border-b-4 border-black bg-black text-white font-bold text-xs uppercase sticky top-0 z-30">
               <div className="p-2 border-r border-white/20">Step</div>
-              {Object.keys(song.channels).slice(0, 3).map((key) => (
-                <div key={key} className="p-2 border-r border-white/20">{key}</div>
+              {Object.keys(song.channels).slice(0, 3).map((key, i) => (
+                <div key={key} className="p-2 border-r border-white/20 flex items-center justify-between">
+                  <span>{key}</span>
+                  <button 
+                    onClick={() => {
+                      const newMuted = [...mutedChannels];
+                      newMuted[i] = !newMuted[i];
+                      setMutedChannels(newMuted);
+                    }}
+                    className={`p-1 hover:bg-white/20 rounded transition-colors ${mutedChannels[i] ? 'text-red-400' : 'text-white/50 hover:text-white'}`}
+                    title={mutedChannels[i] ? "Unmute" : "Mute"}
+                  >
+                    {mutedChannels[i] ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                  </button>
+                </div>
               ))}
-              <div className="p-2">Percussion</div>
+              <div className="p-2 flex items-center justify-between">
+                <span>Percussion</span>
+                <button 
+                  onClick={() => {
+                    const newMuted = [...mutedChannels];
+                    newMuted[3] = !newMuted[3];
+                    setMutedChannels(newMuted);
+                  }}
+                  className={`p-1 hover:bg-white/20 rounded transition-colors ${mutedChannels[3] ? 'text-red-400' : 'text-white/50 hover:text-white'}`}
+                  title={mutedChannels[3] ? "Unmute" : "Mute"}
+                >
+                  {mutedChannels[3] ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                </button>
+              </div>
             </div>
             
             <div ref={scrollContainerRef} className="overflow-y-auto flex-1 custom-scrollbar scroll-smooth relative">
@@ -752,7 +784,7 @@ export default function App() {
               className="bg-[#f4f4f2] border-4 border-black p-8 max-w-2xl w-full shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] overflow-y-auto max-h-[90vh] custom-scrollbar"
             >
               <div className="flex justify-between items-start mb-6 border-b-4 border-black pb-4">
-                <h2 className="text-3xl font-black uppercase">Phantom Circuit</h2>
+                <h2 className="text-3xl font-black uppercase">Chip-Tune</h2>
                 <EInkButton onClick={() => setShowInfo(false)} className="p-1 border-none shadow-none">✕</EInkButton>
               </div>
               
@@ -773,14 +805,17 @@ export default function App() {
                     ))}
                   </div>
                   <p className="mt-4 text-xs opacity-70 leading-relaxed">
-                    The engine defines the core sound synthesis for each channel. Each channel uses a specific oscillator type (Square, Sawtooth, Sine) and optional octave shifting to create the unique Phantom Circuit sound.
+                    The engine defines the core sound synthesis for each channel. Each channel uses a specific oscillator type (Square, Sawtooth, Sine) and optional octave shifting to create the unique Chip-Tune sound.
                   </p>
                 </section>
 
                 <section>
                   <h3 className="text-lg font-black uppercase mb-2">About</h3>
                   <p className="text-sm leading-relaxed">
-                    Phantom Circuit is a minimalist 8-bit music tracker designed for precision and creative flow. It uses a custom synthesis engine to generate raw, authentic chiptune sounds in real-time.
+                    Chip-Tune is a minimalist 8-bit music tracker designed for precision and creative flow. It uses a custom synthesis engine to generate raw, authentic chiptune sounds in real-time.
+                  </p>
+                  <p className="mt-4 text-xs font-bold opacity-60">
+                    Copyright © 2026 Vesa Perasto. All rights reserved.
                   </p>
                 </section>
               </div>
