@@ -33,6 +33,7 @@ export interface Section {
   volume_scale: number;
   type: string;
   note?: string;
+  tempo?: number;
   rows: string[][];
 }
 
@@ -154,6 +155,7 @@ export function validateAndFillSong(parsed: any): SongData {
         volume_scale: typeof s.volume_scale === 'number' ? s.volume_scale : 1.0,
         type: typeof s.type === 'string' ? s.type : 'normal',
         note: typeof s.note === 'string' ? s.note : undefined,
+        tempo: typeof s.tempo === 'number' ? s.tempo : undefined,
         rows: Array.isArray(s.rows) 
           ? s.rows.map((r: any) => Array.isArray(r) ? r.map((c: any) => typeof c === 'string' ? c : "-") : ["-", "-", "-", "-"])
           : [["-", "-", "-", "-"]]

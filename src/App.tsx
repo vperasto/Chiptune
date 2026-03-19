@@ -190,7 +190,7 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
-  const scheduleNote = useCallback((step: number, sectionIdx: number, time: number) => {
+  const scheduleNote = useCallback((step: number, sectionIdx: number, time: number, stepDurationMs: number) => {
     const section = song.sections[sectionIdx];
     const row = section.rows[step];
     const volumeScale = section.volume_scale || 1;
@@ -202,7 +202,7 @@ export default function App() {
         const freq = song.note_frequencies_hz[row[i]];
         const channelConfig = song.channels[channelKeys[i]];
         if (freq && channelConfig) {
-          audioEngine.playNote(freq, channelConfig, time, song.step_duration_ms, volumeScale);
+          audioEngine.playNote(freq, channelConfig, time, stepDurationMs, volumeScale);
         }
       }
     }
@@ -237,9 +237,13 @@ export default function App() {
     }
 
     while (nextNoteTimeRef.current < audioEngine.currentTime + 0.1) {
-      scheduleNote(stepRef.current, sectionRef.current, nextNoteTimeRef.current);
+      const currentSection = currentSong.sections[sectionRef.current];
+      const activeTempo = currentSection.tempo || currentSong.tempo;
+      const secondsPerStep = 60 / (activeTempo * 4);
+      const stepDurationMs = secondsPerStep * 1000;
+
+      scheduleNote(stepRef.current, sectionRef.current, nextNoteTimeRef.current, stepDurationMs);
       
-      const secondsPerStep = 60 / (currentSong.tempo * 4);
       nextNoteTimeRef.current += secondsPerStep;
 
       stepRef.current++;
@@ -701,6 +705,21 @@ export default function App() {
                             >
                               <Edit2 size={10} />
                             </button>
+                            <div className="flex items-center gap-1 ml-2 border-l border-black/20 pl-2">
+                              <span className="opacity-60 text-[9px]">BPM:</span>
+                              <input
+                                type="number"
+                                value={section.tempo || ''}
+                                placeholder={song.tempo.toString()}
+                                onChange={(e) => {
+                                  const val = e.target.value ? parseInt(e.target.value) : undefined;
+                                  const newSections = [...song.sections];
+                                  newSections[sIdx] = { ...section, tempo: val };
+                                  setSong({ ...song, sections: newSections });
+                                }}
+                                className="w-10 bg-transparent border-b border-black/30 text-center focus:outline-none focus:border-black"
+                              />
+                            </div>
                           </div>
                         )}
                       </div>
