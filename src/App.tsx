@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check, Volume2, VolumeX, Code } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check, Volume2, VolumeX, Code, Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { PHANTOM_CIRCUIT, SongData, Section } from './types';
+import { PHANTOM_CIRCUIT, SongData, Section, validateAndFillSong } from './types';
 import { audioEngine } from './audioEngine';
 
 const EInkButton = ({ 
@@ -54,60 +54,7 @@ const EInkInput = ({
 );
 
 export const sanitizeSongData = (imported: any): SongData => {
-  const sanitized: any = { ...imported };
-
-  if (imported.perc && !imported.perc_types) {
-    sanitized.perc_types = imported.perc;
-  }
-
-  if (!sanitized.note_frequencies_hz) {
-    sanitized.note_frequencies_hz = { ...PHANTOM_CIRCUIT.note_frequencies_hz };
-  }
-  
-  const freqs = sanitized.note_frequencies_hz;
-  const sharps: Record<string, string> = { "C#": "Db", "D#": "Eb", "F#": "Gb", "G#": "Ab", "A#": "Bb" };
-  Object.entries(sharps).forEach(([sharp, flat]) => {
-    if (!freqs[sharp] && freqs[flat]) freqs[sharp] = freqs[flat];
-    if (!freqs[flat] && freqs[sharp]) freqs[flat] = freqs[sharp];
-  });
-
-  if (!sanitized.step_duration_ms && sanitized.tempo) {
-    sanitized.step_duration_ms = Math.round((60000 / sanitized.tempo) / 4);
-  }
-
-  if (Array.isArray(sanitized.sections)) {
-    sanitized.sections = sanitized.sections.map((sec: any) => ({
-      ...sec,
-      type: sec.type || 'normal',
-      volume_scale: sec.volume_scale ?? 1,
-      rows: sec.rows || []
-    }));
-  }
-
-  if (sanitized.channels) {
-    Object.keys(sanitized.channels).forEach(key => {
-      if (!sanitized.channels[key].envelope) {
-        sanitized.channels[key].envelope = { attack_ms: 5, release_at: 0.5 };
-      }
-    });
-  }
-
-  if (sanitized.perc_types) {
-    Object.keys(sanitized.perc_types).forEach(key => {
-      const p = sanitized.perc_types[key];
-      if (Object.keys(p).length === 0 && key !== '-') {
-        if (key === 'K') {
-          sanitized.perc_types[key] = { type: 'sine', frequency_hz: 60, volume: 0.8, duration_ms: 150 };
-        } else if (key === 'H') {
-          sanitized.perc_types[key] = { type: 'noise', filter: 'highpass', filter_hz: 7000, volume: 0.1, duration_ms: 50 };
-        } else if (key === 'S') {
-          sanitized.perc_types[key] = { type: 'noise', filter: 'bandpass', filter_hz: 1500, volume: 0.3, duration_ms: 100 };
-        }
-      }
-    });
-  }
-
-  return sanitized;
+  return validateAndFillSong(imported);
 };
 
 export default function App() {
@@ -138,6 +85,11 @@ export default function App() {
   const isEditingJson = useRef(false);
   const [showInfo, setShowInfo] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [librarySort, setLibrarySort] = useState<'newest' | 'oldest' | 'a-z' | 'z-a'>('newest');
+  const [renamingLibrarySong, setRenamingLibrarySong] = useState<string | null>(null);
+  const [newLibrarySongName, setNewLibrarySongName] = useState('');
+  const [confirmDeleteSong, setConfirmDeleteSong] = useState<string | null>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
   const [renamingIndex, setRenamingIndex] = useState<number | null>(null);
@@ -173,6 +125,50 @@ export default function App() {
     setLibrary(newLibrary);
     localStorage.setItem('chiptune_library', JSON.stringify(newLibrary));
   };
+
+  const renameInLibrary = (oldName: string, newName: string) => {
+    if (!newName.trim() || oldName === newName) {
+      setRenamingLibrarySong(null);
+      return;
+    }
+    if (library.some(s => s.name === newName)) {
+      setToast({ message: "A song with this name already exists", type: "error" });
+      return;
+    }
+    const newLibrary = library.map(s => s.name === oldName ? { ...s, name: newName } : s);
+    setLibrary(newLibrary);
+    localStorage.setItem('chiptune_library', JSON.stringify(newLibrary));
+    setRenamingLibrarySong(null);
+    if (song.name === oldName) {
+      setSong({ ...song, name: newName });
+    }
+    setToast({ message: `Renamed to ${newName}`, type: "success" });
+  };
+
+  const filteredAndSortedLibrary = useMemo(() => {
+    let result = [...library];
+    
+    if (librarySearch.trim()) {
+      const query = librarySearch.toLowerCase();
+      result = result.filter(s => s.name.toLowerCase().includes(query) || (s.info && s.info.toLowerCase().includes(query)));
+    }
+    
+    switch (librarySort) {
+      case 'newest':
+        result.reverse();
+        break;
+      case 'oldest':
+        break;
+      case 'a-z':
+        result.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'z-a':
+        result.sort((a, b) => b.name.localeCompare(a.name));
+        break;
+    }
+    
+    return result;
+  }, [library, librarySearch, librarySort]);
 
   const toggleFullScreen = () => {
     if (!document.fullscreenElement) {
@@ -347,13 +343,22 @@ export default function App() {
     }
   }, [song]);
 
+  const copyDefaultTemplate = () => {
+    const template = JSON.stringify(PHANTOM_CIRCUIT, null, 2);
+    navigator.clipboard.writeText(template).then(() => {
+      setToast({ message: "Default template copied to clipboard", type: "success" });
+    }).catch(() => {
+      setToast({ message: "Failed to copy template", type: "error" });
+    });
+  };
+
   const handleJsonChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newText = e.target.value;
     setJsonText(newText);
     try {
       const parsed = JSON.parse(newText);
       setJsonError('');
-      setSong(sanitizeSongData(parsed));
+      setSong(validateAndFillSong(parsed));
     } catch (err: any) {
       setJsonError(err.message);
     }
@@ -786,7 +791,16 @@ export default function App() {
           <div className="w-1/3 h-full flex flex-col border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden transition-all duration-300">
             <div className="bg-black text-white p-2 font-bold uppercase flex justify-between items-center text-xs">
               <span className="flex items-center gap-2"><Code size={14} /> JSON Editor</span>
-              <button onClick={() => setShowJsonEditor(false)} className="hover:text-red-400 transition-colors">✕</button>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={copyDefaultTemplate} 
+                  className="flex items-center gap-1 hover:text-green-400 transition-colors opacity-80 hover:opacity-100"
+                  title="Copy Default Template"
+                >
+                  <Copy size={12} /> <span className="hidden xl:inline">Template</span>
+                </button>
+                <button onClick={() => setShowJsonEditor(false)} className="hover:text-red-400 transition-colors">✕</button>
+              </div>
             </div>
             <textarea
               className="flex-1 p-4 font-mono text-xs resize-none outline-none custom-scrollbar bg-[#f4f4f2]"
@@ -880,27 +894,129 @@ export default function App() {
                 <EInkButton onClick={() => setShowLibrary(false)} className="p-1 border-none shadow-none">✕</EInkButton>
               </div>
               
-              <div className="flex flex-col gap-3 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+              <div className="flex gap-2 mb-4">
+                <div className="relative flex-1 flex items-center border-2 border-black bg-white px-2">
+                  <Search size={16} className="opacity-50" />
+                  <input 
+                    type="text" 
+                    placeholder="Search songs..." 
+                    value={librarySearch}
+                    onChange={(e) => setLibrarySearch(e.target.value)}
+                    className="w-full bg-transparent px-2 py-2 text-sm focus:outline-none"
+                  />
+                  {librarySearch && (
+                    <button onClick={() => setLibrarySearch('')} className="opacity-50 hover:opacity-100">
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <select 
+                    value={librarySort}
+                    onChange={(e) => setLibrarySort(e.target.value as any)}
+                    className="bg-white border-2 border-black px-3 py-2 text-sm font-bold appearance-none pr-8 cursor-pointer focus:outline-none h-full"
+                  >
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="a-z">A-Z</option>
+                    <option value="z-a">Z-A</option>
+                  </select>
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <ChevronDown size={16} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar">
                 {library.length === 0 && (
                   <div className="text-center py-12 border-2 border-dashed border-black/20">
                     <p className="text-sm opacity-50 italic">Your library is empty.</p>
                     <p className="text-xs opacity-40 mt-1">Save your current song to see it here.</p>
                   </div>
                 )}
-                {library.map((s, idx) => (
+                {library.length > 0 && filteredAndSortedLibrary.length === 0 && (
+                  <div className="text-center py-12 border-2 border-dashed border-black/20">
+                    <p className="text-sm opacity-50 italic">No songs found matching "{librarySearch}".</p>
+                  </div>
+                )}
+                {filteredAndSortedLibrary.map((s, idx) => (
                   <div key={idx} className="flex items-center justify-between gap-2 p-3 border-2 border-black bg-white hover:bg-black hover:text-white transition-colors group">
-                    <button 
-                      onClick={() => { setSong(s); setCurrentStep(0); setCurrentSectionIndex(0); setShowLibrary(false); }}
-                      className="flex-1 text-left font-bold truncate"
-                    >
-                      {s.name}
-                    </button>
-                    <button 
-                      onClick={() => deleteFromLibrary(s.name)}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-all"
-                    >
-                      <Trash2 size={20} />
-                    </button>
+                    {renamingLibrarySong === s.name ? (
+                      <div className="flex-1 flex items-center gap-2">
+                        <input 
+                          autoFocus
+                          value={newLibrarySongName}
+                          onChange={(e) => setNewLibrarySongName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') renameInLibrary(s.name, newLibrarySongName);
+                            if (e.key === 'Escape') setRenamingLibrarySong(null);
+                          }}
+                          className="flex-1 bg-white text-black border-2 border-black px-2 py-1 text-sm font-bold focus:outline-none"
+                        />
+                        <button 
+                          onClick={() => renameInLibrary(s.name, newLibrarySongName)}
+                          className="p-1 hover:text-green-500 transition-all text-white"
+                        >
+                          <Check size={20} />
+                        </button>
+                        <button 
+                          onClick={() => setRenamingLibrarySong(null)}
+                          className="p-1 hover:text-red-500 transition-all text-white"
+                        >
+                          <X size={20} />
+                        </button>
+                      </div>
+                    ) : confirmDeleteSong === s.name ? (
+                      <div className="flex-1 flex items-center justify-between text-red-500 font-bold text-sm">
+                        <span className="truncate pr-2">Delete "{s.name}"?</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button 
+                            onClick={() => {
+                              deleteFromLibrary(s.name);
+                              setConfirmDeleteSong(null);
+                            }}
+                            className="px-3 py-1 bg-red-500 text-white hover:bg-red-600 border-2 border-red-500"
+                          >
+                            YES
+                          </button>
+                          <button 
+                            onClick={() => setConfirmDeleteSong(null)}
+                            className="px-3 py-1 border-2 border-red-500 hover:bg-red-500 hover:text-white"
+                          >
+                            NO
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <button 
+                          onClick={() => { setSong(s); setCurrentStep(0); setCurrentSectionIndex(0); setShowLibrary(false); }}
+                          className="flex-1 text-left flex flex-col overflow-hidden"
+                        >
+                          <span className="font-bold truncate w-full">{s.name}</span>
+                          {s.info && <span className="text-[10px] opacity-70 font-normal truncate w-full">{s.info}</span>}
+                        </button>
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-all shrink-0">
+                          <button 
+                            onClick={() => {
+                              setRenamingLibrarySong(s.name);
+                              setNewLibrarySongName(s.name);
+                            }}
+                            className="p-1 hover:text-blue-400 transition-all"
+                            title="Rename"
+                          >
+                            <Edit2 size={18} />
+                          </button>
+                          <button 
+                            onClick={() => setConfirmDeleteSong(s.name)}
+                            className="p-1 hover:text-red-500 transition-all"
+                            title="Delete"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>

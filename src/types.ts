@@ -50,6 +50,140 @@ export interface SongData {
   sections: Section[];
 }
 
+export function validateAndFillSong(parsed: any): SongData {
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error("Invalid JSON: Not an object");
+  }
+
+  const defaultSong = PHANTOM_CIRCUIT;
+
+  // Basic fields
+  const name = typeof parsed.name === 'string' ? parsed.name : "Untitled Song";
+  const tempo = typeof parsed.tempo === 'number' ? parsed.tempo : 120;
+  const step_duration_ms = typeof parsed.step_duration_ms === 'number' ? parsed.step_duration_ms : Math.round(60000 / tempo / 4);
+  const loop = typeof parsed.loop === 'boolean' ? parsed.loop : true;
+  const info = typeof parsed.info === 'string' ? parsed.info : "";
+
+  // Channels
+  const channels: Record<string, ChannelConfig> = {};
+  if (parsed.channels && typeof parsed.channels === 'object') {
+    for (const [key, val] of Object.entries(parsed.channels)) {
+      const v = val as any;
+      if (!v || typeof v !== 'object') continue;
+      channels[key] = {
+        type: ['square', 'triangle', 'sawtooth', 'noise', 'sine'].includes(v.type) ? v.type : 'square',
+        octave_multiplier: typeof v.octave_multiplier === 'number' ? v.octave_multiplier : 1.0,
+        volume: typeof v.volume === 'number' ? v.volume : 0.5,
+        envelope: {
+          attack_ms: typeof v.envelope?.attack_ms === 'number' ? v.envelope.attack_ms : 5,
+          decay_ratio: typeof v.envelope?.decay_ratio === 'number' ? v.envelope.decay_ratio : undefined,
+          sustain_level: typeof v.envelope?.sustain_level === 'number' ? v.envelope.sustain_level : undefined,
+          sustain_until: typeof v.envelope?.sustain_until === 'number' ? v.envelope.sustain_until : undefined,
+          release_at: typeof v.envelope?.release_at === 'number' ? v.envelope.release_at : 0.5,
+        },
+        note_duration_steps: typeof v.note_duration_steps === 'number' ? v.note_duration_steps : undefined,
+        note: typeof v.note === 'string' ? v.note : undefined,
+      };
+    }
+  }
+  if (Object.keys(channels).length === 0) {
+    Object.assign(channels, defaultSong.channels);
+  }
+
+  // Percussions
+  const perc_types: Record<string, Percussion> = {};
+  const sourcePercs = parsed.perc_types || parsed.perc || {};
+  if (typeof sourcePercs === 'object') {
+    for (const [key, val] of Object.entries(sourcePercs)) {
+      const v = val as any;
+      if (!v || typeof v !== 'object') continue;
+      
+      if (Object.keys(v).length === 0 && key !== '-') {
+        if (key === 'K') {
+          perc_types[key] = { type: 'sine', frequency_hz: 60, volume: 0.8, duration_ms: 150 };
+        } else if (key === 'H') {
+          perc_types[key] = { type: 'noise', filter: 'highpass', filter_hz: 7000, volume: 0.1, duration_ms: 50 };
+        } else if (key === 'S') {
+          perc_types[key] = { type: 'noise', filter: 'bandpass', filter_hz: 1500, volume: 0.3, duration_ms: 100 };
+        } else {
+          perc_types[key] = {};
+        }
+      } else {
+        perc_types[key] = {
+          type: ['sine', 'noise', 'square', 'triangle', 'sawtooth'].includes(v.type) ? v.type : undefined,
+          frequency_hz: typeof v.frequency_hz === 'number' ? v.frequency_hz : undefined,
+          volume: typeof v.volume === 'number' ? v.volume : undefined,
+          duration_ms: typeof v.duration_ms === 'number' ? v.duration_ms : undefined,
+          filter: ['lowpass', 'bandpass', 'highpass'].includes(v.filter) ? v.filter : undefined,
+          filter_hz: typeof v.filter_hz === 'number' ? v.filter_hz : undefined,
+          filter_q: typeof v.filter_q === 'number' ? v.filter_q : undefined,
+          play: Array.isArray(v.play) ? v.play.filter((p: any) => typeof p === 'string') : undefined,
+        };
+      }
+    }
+  }
+  if (Object.keys(perc_types).length === 0) {
+    Object.assign(perc_types, defaultSong.perc_types);
+  }
+
+  // Note frequencies
+  let note_frequencies_hz = { ...defaultSong.note_frequencies_hz };
+  if (parsed.note_frequencies_hz && typeof parsed.note_frequencies_hz === 'object') {
+    for (const [key, val] of Object.entries(parsed.note_frequencies_hz)) {
+      if (typeof val === 'number') {
+        note_frequencies_hz[key] = val;
+      }
+    }
+  }
+  
+  const sharps: Record<string, string> = { "C#": "Db", "D#": "Eb", "F#": "Gb", "G#": "Ab", "A#": "Bb" };
+  Object.entries(sharps).forEach(([sharp, flat]) => {
+    if (!note_frequencies_hz[sharp] && note_frequencies_hz[flat]) note_frequencies_hz[sharp] = note_frequencies_hz[flat];
+    if (!note_frequencies_hz[flat] && note_frequencies_hz[sharp]) note_frequencies_hz[flat] = note_frequencies_hz[sharp];
+  });
+
+  // Sections
+  let sections: Section[] = [];
+  if (Array.isArray(parsed.sections)) {
+    sections = parsed.sections.map((s: any, idx: number) => {
+      if (!s || typeof s !== 'object') {
+        return { label: `Section ${idx + 1}`, volume_scale: 1.0, type: 'normal', rows: [["-", "-", "-", "-"]] };
+      }
+      return {
+        label: typeof s.label === 'string' ? s.label : `Section ${idx + 1}`,
+        volume_scale: typeof s.volume_scale === 'number' ? s.volume_scale : 1.0,
+        type: typeof s.type === 'string' ? s.type : 'normal',
+        note: typeof s.note === 'string' ? s.note : undefined,
+        rows: Array.isArray(s.rows) 
+          ? s.rows.map((r: any) => Array.isArray(r) ? r.map((c: any) => typeof c === 'string' ? c : "-") : ["-", "-", "-", "-"])
+          : [["-", "-", "-", "-"]]
+      };
+    });
+  }
+  if (sections.length === 0) {
+    sections = [{
+      label: "Intro",
+      volume_scale: 1.0,
+      type: "normal",
+      rows: Array(16).fill(["-", "-", "-", "-"])
+    }];
+  }
+
+  return {
+    name,
+    tempo,
+    step_duration_ms,
+    loop,
+    info,
+    channels,
+    perc_types,
+    note_frequencies_hz,
+    scale: parsed.scale && typeof parsed.scale === 'object' ? parsed.scale : undefined,
+    section_types: parsed.section_types && typeof parsed.section_types === 'object' ? parsed.section_types : undefined,
+    sections
+  };
+}
+
 export const PHANTOM_CIRCUIT: SongData = {
   "name": "Phantom Circuit v7",
   "tempo": 82,
