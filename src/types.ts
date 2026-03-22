@@ -29,11 +29,13 @@ export interface Percussion {
 }
 
 export interface Section {
+  id: string;
   label: string;
   volume_scale: number;
   type: string;
   note?: string;
   tempo?: number;
+  reference_id?: string;
   rows: string[][];
 }
 
@@ -148,14 +150,22 @@ export function validateAndFillSong(parsed: any): SongData {
   if (Array.isArray(parsed.sections)) {
     sections = parsed.sections.map((s: any, idx: number) => {
       if (!s || typeof s !== 'object') {
-        return { label: `Section ${idx + 1}`, volume_scale: 1.0, type: 'normal', rows: [["-", "-", "-", "-"]] };
+        return { 
+          id: Math.random().toString(36).substring(2, 9),
+          label: `Section ${idx + 1}`, 
+          volume_scale: 1.0, 
+          type: 'normal', 
+          rows: [["-", "-", "-", "-"]] 
+        };
       }
       return {
+        id: typeof s.id === 'string' ? s.id : Math.random().toString(36).substring(2, 9),
         label: typeof s.label === 'string' ? s.label : `Section ${idx + 1}`,
         volume_scale: typeof s.volume_scale === 'number' ? s.volume_scale : 1.0,
         type: typeof s.type === 'string' ? s.type : 'normal',
         note: typeof s.note === 'string' ? s.note : undefined,
         tempo: typeof s.tempo === 'number' ? s.tempo : undefined,
+        reference_id: typeof s.reference_id === 'string' ? s.reference_id : undefined,
         rows: Array.isArray(s.rows) 
           ? s.rows.map((r: any) => Array.isArray(r) ? r.map((c: any) => typeof c === 'string' ? c : "-") : ["-", "-", "-", "-"])
           : [["-", "-", "-", "-"]]
@@ -164,6 +174,7 @@ export function validateAndFillSong(parsed: any): SongData {
   }
   if (sections.length === 0) {
     sections = [{
+      id: Math.random().toString(36).substring(2, 9),
       label: "Intro",
       volume_scale: 1.0,
       type: "normal",
@@ -220,7 +231,7 @@ export const PHANTOM_CIRCUIT: SongData = {
   },
   "sections": [
     {
-      "label": "Intro", "volume_scale": 0.65, "type": "normal",
+      "id": "sec_1", "label": "Intro", "volume_scale": 0.65, "type": "normal",
       "rows": [
         ["-","D","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],
         ["-","D","-","-"],["-","-","-","H"],["-","A","-","-"],["-","-","-","H"],
@@ -229,7 +240,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "A1", "volume_scale": 0.9, "type": "normal",
+      "id": "sec_2", "label": "A1", "volume_scale": 0.9, "type": "normal",
       "rows": [
         ["D","D","-","K"],["-","-","-","H"],["D","-","-","-"],["-","-","-","H"],
         ["F","F","-","K"],["-","-","-","H"],["-","F","-","-"],["-","-","-","H"],
@@ -238,7 +249,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "A2", "volume_scale": 0.95, "type": "normal",
+      "id": "sec_3", "label": "A2", "volume_scale": 0.95, "type": "normal",
       "rows": [
         ["D","D","-","K"],["-","F","-","H"],["D","-","-","-"],["-","D","-","H"],
         ["F","F","-","K"],["-","A","-","H"],["-","F","-","-"],["-","F","-","H"],
@@ -247,7 +258,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "B1", "volume_scale": 0.9, "type": "normal",
+      "id": "sec_4", "label": "B1", "volume_scale": 0.9, "type": "normal",
       "rows": [
         ["Bb","Bb","-","K"],["-","-","-","H"],["Bb","-","-","-"],["-","-","-","H"],
         ["A","A","-","K"],["-","-","-","H"],["-","A","-","-"],["-","-","-","H"],
@@ -256,7 +267,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "B2", "volume_scale": 0.95, "type": "normal",
+      "id": "sec_5", "label": "B2", "volume_scale": 0.95, "type": "normal",
       "rows": [
         ["Bb","Bb","-","K"],["-","D","-","H"],["Bb","-","-","-"],["-","Bb","-","H"],
         ["A","A","-","K"],["-","C","-","H"],["-","A","-","-"],["-","E","-","H"],
@@ -265,7 +276,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "Br1", "volume_scale": 0.95, "type": "brk",
+      "id": "sec_6", "label": "Br1", "volume_scale": 0.95, "type": "brk",
       "rows": [
         ["D","D","-","K"],["-","F","-","H"],["-","-","-","-"],["-","D","-","H"],
         ["-","A","-","-"],["-","F","-","H"],["-","A","-","-"],["-","D","-","H"],
@@ -274,7 +285,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "C1", "volume_scale": 1.05, "type": "mel",
+      "id": "sec_7", "label": "C1", "volume_scale": 1.05, "type": "mel",
       "rows": [
         ["D","D","F","K"],["-","F","-","H"],["D","-","A","-"],["-","D","-","H"],
         ["F","F","A","K"],["-","A","-","H"],["-","F","C","-"],["-","F","-","H"],
@@ -283,7 +294,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "C2", "volume_scale": 1.1, "type": "mel",
+      "id": "sec_8", "label": "C2", "volume_scale": 1.1, "type": "mel",
       "rows": [
         ["D","D","A","K"],["-","F","F","H"],["D","-","D","-"],["-","D","A","H"],
         ["F","F","C","K"],["-","A","A","H"],["-","F","F","-"],["-","F","C","H"],
@@ -292,7 +303,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "C3", "volume_scale": 1.15, "type": "mel",
+      "id": "sec_9", "label": "C3", "volume_scale": 1.15, "type": "mel",
       "rows": [
         ["F","F","C","K"],["A","A","A","KH"],["F","F","F","K"],["A","A","C","H"],
         ["E","E","B","K"],["G","G","G","KH"],["E","E","E","K"],["G","G","B","H"],
@@ -301,7 +312,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "Cx", "volume_scale": 0.3, "type": "lnk",
+      "id": "sec_10", "label": "Cx", "volume_scale": 0.3, "type": "lnk",
       "rows": [
         ["-","A","D","-"],["-","-","-","-"],["-","A","-","-"],["-","F","-","-"],
         ["-","G","D","-"],["-","-","-","-"],["-","G","-","-"],["-","F","-","-"],
@@ -310,7 +321,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "D1", "volume_scale": 0.95, "type": "normal",
+      "id": "sec_11", "label": "D1", "volume_scale": 0.95, "type": "normal",
       "rows": [
         ["D","D","-","K"],["-","F","-","H"],["D","-","-","-"],["-","A","-","H"],
         ["C","C","-","K"],["-","Eb","-","H"],["C","-","-","-"],["-","G","-","H"],
@@ -319,7 +330,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "D2", "volume_scale": 1.0, "type": "normal",
+      "id": "sec_12", "label": "D2", "volume_scale": 1.0, "type": "normal",
       "rows": [
         ["D","D","-","K"],["-","F","-","H"],["F","-","-","-"],["-","A","-","H"],
         ["A","A","-","K"],["-","C","-","H"],["C","-","-","-"],["-","Eb","-","H"],
@@ -328,7 +339,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "E", "volume_scale": 1.15, "type": "mel",
+      "id": "sec_13", "label": "E", "volume_scale": 1.15, "type": "mel",
       "rows": [
         ["D","D","F","K"],["-","F","A","H"],["D","-","D","-"],["-","D","F","H"],
         ["F","F","A","K"],["-","A","C","H"],["F","-","F","-"],["-","F","A","H"],
@@ -337,7 +348,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "E2", "volume_scale": 1.05, "type": "mel",
+      "id": "sec_14", "label": "E2", "volume_scale": 1.05, "type": "mel",
       "rows": [
         ["A","A","C","K"],["-","C","E","H"],["A","-","A","-"],["-","A","C","H"],
         ["G","G","Bb","K"],["-","Bb","D","H"],["G","-","G","-"],["-","G","Bb","H"],
@@ -346,7 +357,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "F1", "volume_scale": 1.05, "type": "ret",
+      "id": "sec_15", "label": "F1", "volume_scale": 1.05, "type": "ret",
       "rows": [
         ["D","D","F","K"],["-","F","-","H"],["D","-","A","-"],["-","D","-","H"],
         ["F","F","A","K"],["-","A","-","H"],["-","F","C","-"],["-","F","-","H"],
@@ -355,7 +366,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "Fx", "volume_scale": 0.55, "type": "lnk",
+      "id": "sec_16", "label": "Fx", "volume_scale": 0.55, "type": "lnk",
       "rows": [
         ["-","G","-","K"],["-","-","-","H"],["-","G","-","-"],["-","-","-","H"],
         ["-","F","-","-"],["-","-","-","H"],["-","F","-","-"],["-","-","-","H"],
@@ -364,7 +375,7 @@ export const PHANTOM_CIRCUIT: SongData = {
       ]
     },
     {
-      "label": "Outro", "volume_scale": 0.4, "type": "normal",
+      "id": "sec_17", "label": "Outro", "volume_scale": 0.4, "type": "normal",
       "rows": [
         ["-","-","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],
         ["-","-","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],

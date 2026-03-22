@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check, Volume2, VolumeX, Code, Search, X } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import { Play, Square as Stop, Download, Upload, Plus, Trash2, Save, Music, Info, Settings, Copy, ChevronUp, ChevronDown, Maximize, Minimize, Library as LibraryIcon, ChevronLeft, ChevronRight, Edit2, Check, Volume2, VolumeX, Code, Search, X, Link } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PHANTOM_CIRCUIT, SongData, Section, validateAndFillSong } from './types';
 import { audioEngine } from './audioEngine';
@@ -57,6 +57,85 @@ export const sanitizeSongData = (imported: any): SongData => {
   return validateAndFillSong(imported);
 };
 
+// Memoized Note Select to avoid re-rendering thousands of options
+const NoteSelect = memo(({ 
+  value, 
+  onChange, 
+  options, 
+  disabled, 
+  isActive 
+}: { 
+  value: string, 
+  onChange: (val: string) => void, 
+  options: string[], 
+  disabled?: boolean,
+  isActive?: boolean
+}) => {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className={`w-full bg-transparent text-center text-sm font-bold focus:outline-none appearance-none ${!disabled ? 'cursor-pointer' : ''} ${isActive ? 'text-white' : 'text-black'}`}
+    >
+      <option value="-">-</option>
+      {options.map(opt => (
+        <option key={opt} value={opt}>{opt}</option>
+      ))}
+    </select>
+  );
+});
+
+// Memoized Row component
+const TrackerRow = memo(({ 
+  rIdx, 
+  sIdx, 
+  row, 
+  isCurrent, 
+  isActive, 
+  isLinked, 
+  seekTo, 
+  updateCell, 
+  noteOptions, 
+  percOptions,
+  activeRowRef
+}: { 
+  rIdx: number, 
+  sIdx: number, 
+  row: string[], 
+  isCurrent: boolean, 
+  isActive: boolean, 
+  isLinked: boolean, 
+  seekTo: (sIdx: number, rIdx: number) => void, 
+  updateCell: (sIdx: number, rIdx: number, cIdx: number, val: string) => void,
+  noteOptions: string[],
+  percOptions: string[],
+  activeRowRef: React.RefObject<HTMLDivElement | null>
+}) => {
+  return (
+    <div 
+      ref={isCurrent ? activeRowRef : null}
+      onClick={() => !isLinked && seekTo(sIdx, rIdx)}
+      className={`grid grid-cols-[60px_1fr_1fr_1fr_1fr] border-b border-black/10 last:border-b-0 transition-colors ${!isLinked ? 'cursor-pointer' : ''} ${isActive ? 'bg-black text-white' : isCurrent ? 'bg-black/10' : 'hover:bg-[#f8f8f6]'}`}
+    >
+      <div className="p-2 border-r border-black/10 text-center text-xs opacity-50 font-bold">
+        {String(rIdx).padStart(2, '0')}
+      </div>
+      {row.map((cell, cIdx) => (
+        <div key={cIdx} className="p-1 border-r border-black/10 last:border-r-0">
+          <NoteSelect 
+            value={cell}
+            disabled={isLinked}
+            isActive={isActive}
+            onChange={(val) => updateCell(sIdx, rIdx, cIdx, val)}
+            options={cIdx < 3 ? noteOptions : percOptions}
+          />
+        </div>
+      ))}
+    </div>
+  );
+});
+
 export default function App() {
   const [song, setSong] = useState<SongData>(() => {
     const saved = localStorage.getItem('phantom_circuit_current_song');
@@ -69,6 +148,9 @@ export default function App() {
     }
     return PHANTOM_CIRCUIT;
   });
+
+  const noteOptions = useMemo(() => Object.keys(song.note_frequencies_hz), [song.note_frequencies_hz]);
+  const percOptions = useMemo(() => Object.keys(song.perc_types), [song.perc_types]);
 
   useEffect(() => {
     localStorage.setItem('phantom_circuit_current_song', JSON.stringify(song));
@@ -190,17 +272,39 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
+  const mutedChannelsRef = useRef(mutedChannels);
+  useEffect(() => {
+    mutedChannelsRef.current = mutedChannels;
+  }, [mutedChannels]);
+
+  const resolveTargetSection = useCallback((section: Section, allSections: Section[]): Section => {
+    if (!section.reference_id) return section;
+    const target = allSections.find(s => s.id === section.reference_id);
+    if (!target) return section;
+    // Prevent infinite loops by limiting depth
+    if (target.reference_id && target.reference_id !== target.id) {
+       return resolveTargetSection(target, allSections);
+    }
+    return target;
+  }, []);
+
   const scheduleNote = useCallback((step: number, sectionIdx: number, time: number, stepDurationMs: number) => {
-    const section = song.sections[sectionIdx];
-    const row = section.rows[step];
+    const currentSong = songRef.current;
+    const currentMuted = mutedChannelsRef.current;
+    
+    const section = currentSong.sections[sectionIdx];
+    const targetSection = resolveTargetSection(section, currentSong.sections);
+    const row = targetSection.rows[step];
+    if (!row) return;
+    
     const volumeScale = section.volume_scale || 1;
-    const channelKeys = Object.keys(song.channels);
+    const channelKeys = Object.keys(currentSong.channels);
 
     // Schedule notes for the first 3 columns (Melodic channels)
     for (let i = 0; i < 3; i++) {
-      if (row[i] !== '-' && channelKeys[i] && !mutedChannels[i]) {
-        const freq = song.note_frequencies_hz[row[i]];
-        const channelConfig = song.channels[channelKeys[i]];
+      if (row[i] !== '-' && channelKeys[i] && !currentMuted[i]) {
+        const freq = currentSong.note_frequencies_hz[row[i]];
+        const channelConfig = currentSong.channels[channelKeys[i]];
         if (freq && channelConfig) {
           audioEngine.playNote(freq, channelConfig, time, stepDurationMs, volumeScale);
         }
@@ -208,18 +312,13 @@ export default function App() {
     }
 
     // Schedule percussion for the 4th column
-    if (row[3] !== '-' && !mutedChannels[3]) {
-      const perc = song.perc_types[row[3]];
+    if (row[3] !== '-' && !currentMuted[3]) {
+      const perc = currentSong.perc_types[row[3]];
       if (perc) {
-        audioEngine.playPercussion(perc, time, song, volumeScale);
+        audioEngine.playPercussion(perc, time, currentSong, volumeScale);
       }
     }
-  }, [song, mutedChannels]);
-
-  const songRef = useRef(song);
-  useEffect(() => {
-    songRef.current = song;
-  }, [song]);
+  }, [resolveTargetSection]);
 
   const isLoopingSectionRef = useRef(isLoopingSection);
   useEffect(() => {
@@ -236,8 +335,10 @@ export default function App() {
       nextNoteTimeRef.current = audioEngine.currentTime;
     }
 
-    while (nextNoteTimeRef.current < audioEngine.currentTime + 0.1) {
+    while (nextNoteTimeRef.current < audioEngine.currentTime + 0.2) {
       const currentSection = currentSong.sections[sectionRef.current];
+      const targetSection = resolveTargetSection(currentSection, currentSong.sections);
+      
       const activeTempo = currentSection.tempo || currentSong.tempo;
       const secondsPerStep = 60 / (activeTempo * 4);
       const stepDurationMs = secondsPerStep * 1000;
@@ -247,7 +348,7 @@ export default function App() {
       nextNoteTimeRef.current += secondsPerStep;
 
       stepRef.current++;
-      if (stepRef.current >= currentSong.sections[sectionRef.current].rows.length) {
+      if (stepRef.current >= targetSection.rows.length) {
         stepRef.current = 0;
         
         if (!isLoopingSectionRef.current) {
@@ -272,7 +373,7 @@ export default function App() {
       });
     }
     timerRef.current = window.setTimeout(scheduler, 25);
-  }, [isPlaying, scheduleNote]);
+  }, [isPlaying, scheduleNote, resolveTargetSection]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -330,7 +431,7 @@ export default function App() {
     setToast({ message, type });
   };
 
-  const seekTo = (sectionIdx: number, stepIdx: number) => {
+  const seekTo = useCallback((sectionIdx: number, stepIdx: number) => {
     setCurrentSectionIndex(sectionIdx);
     setCurrentStep(stepIdx);
     sectionRef.current = sectionIdx;
@@ -338,7 +439,7 @@ export default function App() {
     if (isPlaying) {
       nextNoteTimeRef.current = audioEngine.currentTime;
     }
-  };
+  }, [isPlaying]);
 
   // Sync JSON editor with song state
   useEffect(() => {
@@ -378,11 +479,11 @@ export default function App() {
     downloadAnchorNode.remove();
   };
 
-  const updateCell = (sectionIdx: number, rowIdx: number, colIdx: number, value: string) => {
+  const updateCell = useCallback((sectionIdx: number, rowIdx: number, colIdx: number, value: string) => {
     const newSections = [...song.sections];
     newSections[sectionIdx].rows[rowIdx][colIdx] = value;
     setSong({ ...song, sections: newSections });
-  };
+  }, [song]);
 
   const updateSongMetadata = (field: 'name' | 'info', value: string) => {
     setSong({ ...song, [field]: value });
@@ -405,8 +506,9 @@ export default function App() {
   const duplicateSection = (index: number) => {
     const newSections = [...song.sections];
     const sectionToDuplicate = newSections[index];
-    const duplicated = {
+    const duplicated: Section = {
       ...sectionToDuplicate,
+      id: Math.random().toString(36).substring(2, 9),
       label: `${sectionToDuplicate.label} (Copy)`,
       rows: sectionToDuplicate.rows.map(row => [...row])
     };
@@ -415,10 +517,56 @@ export default function App() {
     showToast(`Section "${sectionToDuplicate.label}" duplicated`, 'success');
   };
 
+  const duplicateAsLink = (index: number) => {
+    const source = song.sections[index];
+    const targetId = source.reference_id || source.id;
+    const newSection: Section = {
+      id: Math.random().toString(36).substring(2, 9),
+      label: `${source.label} (Link)`,
+      type: source.type,
+      volume_scale: source.volume_scale,
+      tempo: source.tempo,
+      reference_id: targetId,
+      rows: [] // Empty rows since it's a reference
+    };
+    const newSections = [...song.sections];
+    newSections.splice(index + 1, 0, newSection);
+    setSong({ ...song, sections: newSections });
+    showToast(`Created link to "${source.label}"`, 'success');
+  };
+
+  const unlinkSection = (index: number) => {
+    const section = song.sections[index];
+    if (!section.reference_id) return;
+    const target = song.sections.find(s => s.id === section.reference_id);
+    if (!target) return;
+    
+    const newSections = [...song.sections];
+    newSections[index] = {
+      ...section,
+      reference_id: undefined,
+      rows: JSON.parse(JSON.stringify(target.rows)) // Deep copy rows
+    };
+    setSong({ ...song, sections: newSections });
+    showToast(`Section "${section.label}" unlinked and made independent`, 'success');
+  };
+
   const deleteSection = (index: number) => {
     if (song.sections.length <= 1) return;
-    const sectionName = song.sections[index].label;
-    const newSections = song.sections.filter((_, i) => i !== index);
+    const sectionToDelete = song.sections[index];
+    const sectionName = sectionToDelete.label;
+    
+    const newSections = song.sections.filter((_, i) => i !== index).map(sec => {
+      // If this section references the deleted one, unlink it
+      if (sec.reference_id === sectionToDelete.id) {
+        return {
+          ...sec,
+          reference_id: undefined,
+          rows: JSON.parse(JSON.stringify(sectionToDelete.rows))
+        };
+      }
+      return sec;
+    });
     setSong({ ...song, sections: newSections });
     if (currentSectionIndex >= newSections.length) {
       setCurrentSectionIndex(newSections.length - 1);
@@ -457,7 +605,7 @@ export default function App() {
       let actualTop = row.offsetTop;
       let parent = row.offsetParent as HTMLElement;
       
-      while (parent && parent !== container) {
+      while (parent && parent !== container && parent !== document.body) {
         actualTop += parent.offsetTop;
         parent = parent.offsetParent as HTMLElement;
       }
@@ -465,10 +613,10 @@ export default function App() {
       const rowHeight = row.offsetHeight;
       const containerHeight = container.offsetHeight;
       
-      // Center the row in the container
+      // Use 'auto' during playback for performance, 'smooth' for manual seeking
       container.scrollTo({
         top: actualTop - (containerHeight / 2) + (rowHeight / 2),
-        behavior: isPlaying ? 'smooth' : 'auto'
+        behavior: isPlaying ? 'auto' : 'smooth'
       });
     }
   }, [currentStep, currentSectionIndex, isPlaying]);
@@ -626,7 +774,12 @@ export default function App() {
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-bold uppercase">Step</label>
               <div className="px-2 py-1 border-2 border-black font-bold text-sm">
-                {currentStep + 1} / {song.sections[currentSectionIndex]?.rows.length || 0}
+                {currentStep + 1} / {(() => {
+                  const currentSection = song.sections[currentSectionIndex];
+                  if (!currentSection) return 0;
+                  const targetSection = resolveTargetSection(currentSection, song.sections);
+                  return targetSection.rows.length;
+                })()}
               </div>
             </div>
           </div>
@@ -743,9 +896,16 @@ export default function App() {
                         <button 
                           onClick={() => duplicateSection(sIdx)} 
                           className="p-1 hover:bg-black hover:text-white transition-colors"
-                          title="Duplicate"
+                          title="Duplicate (Independent Copy)"
                         >
                           <Copy size={14} />
+                        </button>
+                        <button 
+                          onClick={() => duplicateAsLink(sIdx)} 
+                          className="p-1 hover:bg-black hover:text-white transition-colors"
+                          title="Duplicate as Link (Changes sync with original)"
+                        >
+                          <Link size={14} />
                         </button>
                         <button 
                           onClick={() => deleteSection(sIdx)} 
@@ -764,42 +924,48 @@ export default function App() {
                       placeholder="Add section note..."
                     />
                   </div>
-                  {section.rows.map((row, rIdx) => {
-                    const isCurrent = currentSectionIndex === sIdx && currentStep === rIdx;
-                    const isActive = isPlaying && isCurrent;
+                  {(() => {
+                    const isLinked = !!section.reference_id;
+                    const targetSection = isLinked ? resolveTargetSection(section, song.sections) : null;
+                    const rowsToRender = isLinked && targetSection ? targetSection.rows : section.rows;
+                    
                     return (
-                      <div 
-                        key={rIdx} 
-                        ref={isCurrent ? activeRowRef : null}
-                        onClick={() => seekTo(sIdx, rIdx)}
-                        className={`grid grid-cols-[60px_1fr_1fr_1fr_1fr] border-b border-black/10 last:border-b-0 transition-colors cursor-pointer ${isActive ? 'bg-black text-white' : isCurrent ? 'bg-black/10' : 'hover:bg-[#f8f8f6]'}`}
-                      >
-                        <div className="p-2 border-r border-black/10 text-center text-xs opacity-50 font-bold">
-                          {String(rIdx).padStart(2, '0')}
-                        </div>
-                        {row.map((cell, cIdx) => (
-                          <div key={cIdx} className="p-1 border-r border-black/10 last:border-r-0">
-                            <select
-                              value={cell}
-                              onChange={(e) => updateCell(sIdx, rIdx, cIdx, e.target.value)}
-                              className={`w-full bg-transparent text-center text-sm font-bold focus:outline-none appearance-none cursor-pointer ${isActive ? 'text-white' : 'text-black'}`}
-                            >
-                              <option value="-">-</option>
-                              {cIdx < 3 ? (
-                                Object.keys(song.note_frequencies_hz).map(note => (
-                                  <option key={note} value={note}>{note}</option>
-                                ))
-                              ) : (
-                                Object.keys(song.perc_types).map(perc => (
-                                  <option key={perc} value={perc}>{perc}</option>
-                                ))
-                              )}
-                            </select>
+                      <div className="relative">
+                        {isLinked && (
+                          <div className="absolute inset-0 z-10 bg-black/5 pointer-events-none flex flex-col items-center justify-center">
+                            <div className="bg-white/90 border-2 border-black p-4 flex flex-col items-center pointer-events-auto shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                              <Link size={24} className="mb-2 opacity-80" />
+                              <span className="font-bold text-sm">Linked to: {targetSection ? targetSection.label : 'Unknown'}</span>
+                              <button 
+                                onClick={() => unlinkSection(sIdx)} 
+                                className="mt-3 px-3 py-1 bg-black text-white text-xs font-bold uppercase hover:bg-gray-800 transition-colors"
+                              >
+                                Unlink
+                              </button>
+                            </div>
                           </div>
-                        ))}
+                        )}
+                        <div className={isLinked ? 'opacity-40 pointer-events-none' : ''}>
+                          {rowsToRender.map((row, rIdx) => (
+                            <TrackerRow 
+                              key={rIdx}
+                              rIdx={rIdx}
+                              sIdx={sIdx}
+                              row={row}
+                              isCurrent={currentSectionIndex === sIdx && currentStep === rIdx}
+                              isActive={isPlaying && currentSectionIndex === sIdx && currentStep === rIdx}
+                              isLinked={isLinked}
+                              seekTo={seekTo}
+                              updateCell={updateCell}
+                              noteOptions={noteOptions}
+                              percOptions={percOptions}
+                              activeRowRef={activeRowRef}
+                            />
+                          ))}
+                        </div>
                       </div>
                     );
-                  })}
+                  })()}
                 </div>
               ))}
             </div>
