@@ -277,6 +277,11 @@ export default function App() {
     mutedChannelsRef.current = mutedChannels;
   }, [mutedChannels]);
 
+  const songRef = useRef(song);
+  useEffect(() => {
+    songRef.current = song;
+  }, [song]);
+
   const resolveTargetSection = useCallback((section: Section, allSections: Section[]): Section => {
     if (!section.reference_id) return section;
     const target = allSections.find(s => s.id === section.reference_id);
