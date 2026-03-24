@@ -301,6 +301,10 @@ export default function App() {
     const targetSection = resolveTargetSection(section, currentSong.sections);
     const row = targetSection.rows[step];
     if (!row) return;
+
+    // Apply reverb override if present, otherwise use global reverb
+    const reverbConfig = section.reverb_override || targetSection.reverb_override || currentSong.reverb;
+    audioEngine.setReverb(reverbConfig);
     
     const volumeScale = section.volume_scale || 1;
     const channelKeys = Object.keys(currentSong.channels);
@@ -309,9 +313,61 @@ export default function App() {
     for (let i = 0; i < 3; i++) {
       if (row[i] !== '-' && channelKeys[i] && !currentMuted[i]) {
         const freq = currentSong.note_frequencies_hz[row[i]];
-        const channelConfig = currentSong.channels[channelKeys[i]];
+        let channelConfig = currentSong.channels[channelKeys[i]];
+        
+        const override = section.channel_overrides?.[channelKeys[i]] || targetSection.channel_overrides?.[channelKeys[i]];
+        if (override) {
+          channelConfig = {
+            ...channelConfig,
+            ...override,
+            envelope: {
+              ...channelConfig.envelope,
+              ...(override.envelope || {})
+            }
+          };
+        }
+
         if (freq && channelConfig) {
-          audioEngine.playNote(freq, channelConfig, time, stepDurationMs, volumeScale);
+          const duration = stepDurationMs * (channelConfig.note_duration_steps || 1);
+          
+          let effects: {
+            portamento?: { targetFreq: number, durationMs: number },
+            filterSweep?: { type: BiquadFilterType, startHz: number, endHz: number, sweepStartTime: number, sweepEndTime: number }
+          } | undefined = undefined;
+
+          // Find active section effects for this channel and row
+          const activeEffects = (section.section_effects || targetSection.section_effects || []).filter(e => 
+            e.channel === channelKeys[i] && 
+            step >= e.row_start && 
+            (e.row_end === undefined || step <= e.row_end)
+          );
+
+          if (activeEffects.length > 0) {
+            effects = {};
+            for (const effect of activeEffects) {
+              if (effect.effect === 'portamento' && effect.target_note) {
+                const targetFreq = currentSong.note_frequencies_hz[effect.target_note];
+                if (targetFreq) {
+                  effects.portamento = {
+                    targetFreq,
+                    durationMs: (effect.duration_steps || 1) * stepDurationMs
+                  };
+                }
+              } else if (effect.effect === 'filter_sweep' && effect.type && effect.start_hz !== undefined && effect.end_hz !== undefined) {
+                const sweepStartTime = time - (step - effect.row_start) * (stepDurationMs / 1000);
+                const sweepEndTime = sweepStartTime + ((effect.row_end !== undefined ? effect.row_end : targetSection.rows.length - 1) - effect.row_start + 1) * (stepDurationMs / 1000);
+                effects.filterSweep = {
+                  type: effect.type as BiquadFilterType,
+                  startHz: effect.start_hz,
+                  endHz: effect.end_hz,
+                  sweepStartTime,
+                  sweepEndTime
+                };
+              }
+            }
+          }
+
+          audioEngine.playNote(freq, channelConfig, time, duration, volumeScale, effects);
         }
       }
     }
@@ -320,7 +376,8 @@ export default function App() {
     if (row[3] !== '-' && !currentMuted[3]) {
       const perc = currentSong.perc_types[row[3]];
       if (perc) {
-        audioEngine.playPercussion(perc, time, currentSong, volumeScale);
+        const percChannelConfig = currentSong.channels['percussion'];
+        audioEngine.playPercussion(perc, time, currentSong, volumeScale, percChannelConfig?.panning);
       }
     }
   }, [resolveTargetSection]);

@@ -12,6 +12,8 @@ export interface ChannelConfig {
   type: 'square' | 'triangle' | 'sawtooth' | 'noise' | 'sine';
   octave_multiplier?: number;
   volume: number;
+  panning?: number;
+  fast_arp_intervals?: number[];
   envelope: Envelope;
   note_duration_steps?: number;
   note?: string;
@@ -28,6 +30,24 @@ export interface Percussion {
   play?: string[];
 }
 
+export interface ReverbConfig {
+  type: 'amiga_delay' | 'hall' | 'room';
+  delay_steps?: number;
+  wet_volume?: number;
+}
+
+export interface SectionEffect {
+  row_start: number;
+  row_end?: number;
+  channel: string;
+  effect: 'filter_sweep' | 'portamento';
+  type?: 'lowpass' | 'highpass' | 'bandpass';
+  start_hz?: number;
+  end_hz?: number;
+  target_note?: string;
+  duration_steps?: number;
+}
+
 export interface Section {
   id: string;
   label: string;
@@ -36,6 +56,9 @@ export interface Section {
   note?: string;
   tempo?: number;
   reference_id?: string;
+  channel_overrides?: Record<string, any>;
+  reverb_override?: ReverbConfig;
+  section_effects?: SectionEffect[];
   rows: string[][];
 }
 
@@ -46,6 +69,7 @@ export interface SongData {
   loop: boolean;
   info: string;
   channels: Record<string, ChannelConfig>;
+  reverb?: ReverbConfig;
   perc_types: Record<string, Percussion>;
   note_frequencies_hz: Record<string, number>;
   scale?: { name: string; notes: string[] };
@@ -77,6 +101,8 @@ export function validateAndFillSong(parsed: any): SongData {
         type: ['square', 'triangle', 'sawtooth', 'noise', 'sine'].includes(v.type) ? v.type : 'square',
         octave_multiplier: typeof v.octave_multiplier === 'number' ? v.octave_multiplier : 1.0,
         volume: typeof v.volume === 'number' ? v.volume : 0.5,
+        panning: typeof v.panning === 'number' ? v.panning : undefined,
+        fast_arp_intervals: Array.isArray(v.fast_arp_intervals) ? v.fast_arp_intervals.filter((i: any) => typeof i === 'number') : undefined,
         envelope: {
           attack_ms: typeof v.envelope?.attack_ms === 'number' ? v.envelope.attack_ms : 5,
           decay_ratio: typeof v.envelope?.decay_ratio === 'number' ? v.envelope.decay_ratio : undefined,
@@ -91,6 +117,16 @@ export function validateAndFillSong(parsed: any): SongData {
   }
   if (Object.keys(channels).length === 0) {
     Object.assign(channels, defaultSong.channels);
+  }
+
+  // Reverb
+  let reverb: ReverbConfig | undefined = undefined;
+  if (parsed.reverb && typeof parsed.reverb === 'object') {
+    reverb = {
+      type: ['amiga_delay', 'hall', 'room'].includes(parsed.reverb.type) ? parsed.reverb.type : 'amiga_delay',
+      delay_steps: typeof parsed.reverb.delay_steps === 'number' ? parsed.reverb.delay_steps : undefined,
+      wet_volume: typeof parsed.reverb.wet_volume === 'number' ? parsed.reverb.wet_volume : undefined,
+    };
   }
 
   // Percussions
@@ -166,6 +202,23 @@ export function validateAndFillSong(parsed: any): SongData {
         note: typeof s.note === 'string' ? s.note : undefined,
         tempo: typeof s.tempo === 'number' ? s.tempo : undefined,
         reference_id: typeof s.reference_id === 'string' ? s.reference_id : undefined,
+        channel_overrides: s.channel_overrides && typeof s.channel_overrides === 'object' ? s.channel_overrides : undefined,
+        reverb_override: s.reverb_override && typeof s.reverb_override === 'object' ? {
+          type: ['amiga_delay', 'hall', 'room'].includes(s.reverb_override.type) ? s.reverb_override.type : 'amiga_delay',
+          delay_steps: typeof s.reverb_override.delay_steps === 'number' ? s.reverb_override.delay_steps : undefined,
+          wet_volume: typeof s.reverb_override.wet_volume === 'number' ? s.reverb_override.wet_volume : undefined,
+        } : undefined,
+        section_effects: Array.isArray(s.section_effects) ? s.section_effects.map((e: any) => ({
+          row_start: typeof e.row_start === 'number' ? e.row_start : 0,
+          row_end: typeof e.row_end === 'number' ? e.row_end : undefined,
+          channel: typeof e.channel === 'string' ? e.channel : 'lead',
+          effect: ['filter_sweep', 'portamento'].includes(e.effect) ? e.effect : 'filter_sweep',
+          type: ['lowpass', 'highpass', 'bandpass'].includes(e.type) ? e.type : undefined,
+          start_hz: typeof e.start_hz === 'number' ? e.start_hz : undefined,
+          end_hz: typeof e.end_hz === 'number' ? e.end_hz : undefined,
+          target_note: typeof e.target_note === 'string' ? e.target_note : undefined,
+          duration_steps: typeof e.duration_steps === 'number' ? e.duration_steps : undefined,
+        })) : undefined,
         rows: Array.isArray(s.rows) 
           ? s.rows.map((r: any) => Array.isArray(r) ? r.map((c: any) => typeof c === 'string' ? c : "-") : ["-", "-", "-", "-"])
           : [["-", "-", "-", "-"]]
@@ -189,6 +242,7 @@ export function validateAndFillSong(parsed: any): SongData {
     loop,
     info,
     channels,
+    reverb,
     perc_types,
     note_frequencies_hz,
     scale: parsed.scale && typeof parsed.scale === 'object' ? parsed.scale : undefined,
@@ -198,189 +252,330 @@ export function validateAndFillSong(parsed: any): SongData {
 }
 
 export const PHANTOM_CIRCUIT: SongData = {
-  "name": "Phantom Circuit v7",
-  "tempo": 82,
-  "step_duration_ms": 183,
+  "name": "Titanium Pirouette (Dynamic Delay Variant)",
+  "tempo": 130,
+  "step_duration_ms": 110,
   "loop": true,
-  "info": "D-molli · Amiga MOD -tyyli · Sub-basso triangle 0.25× · Cx mid-stab korjattu D-mollin säveliin · Fx siirtymä F1→Outro · Outro pelkät hihatit",
+  "info": "6/8 tahtilaji. Sisältää 'reverb_override' -logiikan: Kaiku muuttuu osioiden välillä.",
   "channels": {
-    "CH1_sub": { "type": "triangle", "octave_multiplier": 0.25, "volume": 0.28, "envelope": { "attack_ms": 15, "sustain_until": 0.70, "release_at": 0.95 }, "note_duration_steps": 3.8 },
-    "CH2_mid": { "type": "square", "octave_multiplier": 0.5, "volume": 0.14, "envelope": { "attack_ms": 5, "decay_ratio": 0.30, "sustain_level": 0.40, "release_at": 0.85 }, "note_duration_steps": 2.2 },
-    "CH3_mel": { "type": "square", "octave_multiplier": 1.0, "volume": 0.13, "envelope": { "attack_ms": 4, "decay_ratio": 0.35, "sustain_level": 0.60, "release_at": 0.90 }, "note_duration_steps": 3.5, "note": "Soittaa vain C1-C3, E, E2 ja F1 osiossa" },
-    "CH4_hh": { "type": "noise", "volume": 0.1, "envelope": { "attack_ms": 1, "release_at": 0.1 } }
+    "lead": { "type": "square", "octave_multiplier": 1, "volume": 0.35, "envelope": { "attack_ms": 5, "decay_ratio": 0.2, "sustain_level": 0.4, "release_at": 0.8 }, "note_duration_steps": 2, "panning": 0.0 },
+    "bass": { "type": "triangle", "octave_multiplier": 0.5, "volume": 0.75, "envelope": { "attack_ms": 5, "sustain_until": 0.4, "release_at": 0.9 }, "note_duration_steps": 2, "panning": 0.0 },
+    "arp": { "type": "square", "octave_multiplier": 1, "volume": 0.2, "envelope": { "attack_ms": 2, "decay_ratio": 0.1, "sustain_level": 0.2, "release_at": 0.4 }, "note_duration_steps": 1, "panning": 0.4, "fast_arp_intervals": [0, 3, 7] },
+    "percussion": { "type": "noise", "volume": 0.3, "envelope": { "attack_ms": 1, "release_at": 0.2 }, "panning": -0.2 }
+  },
+  "reverb": {
+    "type": "hall",
+    "delay_steps": 3,
+    "wet_volume": 0.2
   },
   "perc_types": {
-    "K":  { "type": "sine", "frequency_hz": 60, "volume": 0.70, "duration_ms": 130 },
-    "H":  { "filter": "highpass", "filter_hz": 7000, "filter_q": 1.0, "volume": 0.09, "duration_ms": 60 },
-    "S":  { "filter": "bandpass", "filter_hz": 1800, "filter_q": 0.5, "volume": 0.25, "duration_ms": 90 },
-    "KH": { "play": ["K","H"] },
-    "-":  {}
+    "K": { "type": "sine", "frequency_hz": 45, "volume": 1.0, "duration_ms": 110 },
+    "S": { "filter": "bandpass", "filter_hz": 1800, "filter_q": 0.6, "volume": 0.55, "duration_ms": 60 },
+    "H": { "filter": "highpass", "filter_hz": 9000, "filter_q": 1.0, "volume": 0.15, "duration_ms": 30 },
+    "-": {}
   },
   "note_frequencies_hz": {
-    "C": 261.63, "Db": 277.18, "D": 293.66, "Eb": 311.13, "E": 329.63,
-    "F": 349.23, "Gb": 369.99, "G": 392.00, "Ab": 415.30, "A": 440.00,
-    "Bb": 466.16, "B": 493.88
-  },
-  "scale": { "name": "D minor", "notes": ["D","E","F","G","A","Bb","C"] },
-  "section_types": {
-    "normal": "tavallinen groove-osio",
-    "brk": "pehmeä break — mid-stab pitää harmonian, ei täydellistä hiljaisuutta",
-    "lnk": "siirtymäosio — basso laskee hiljaa, ei kickiä",
-    "mel": "melodia-osio — CH3 soittaa",
-    "ret": "paluu — F1 = C1, tuttu melodia tulee takaisin"
+    "E1": 41.20, "A1": 55.00, "B1": 61.74, 
+    "D#2": 77.78, "E2": 82.41, 
+    "C4": 261.63, "D#4": 311.13, "E4": 329.63, "F#4": 369.99, "G4": 392.00, "A4": 440.00, "B4": 493.88, 
+    "C5": 523.25, "D5": 587.33, "D#5": 622.25, "E5": 659.25, "F#5": 739.99, "G5": 783.99, "A5": 880.00, "B5": 987.77,
+    "C6": 1046.50, "D6": 1174.66, "D#6": 1244.51, "E6": 1318.51, "F#6": 1479.98, "G6": 1567.98, "A6": 1760.00
   },
   "sections": [
     {
-      "id": "sec_1", "label": "Intro", "volume_scale": 0.65, "type": "normal",
+      "id": "sec_1",
+      "label": "Intro_DoubleKick_68_Em",
+      "volume_scale": 0.8,
+      "type": "normal",
+      "reverb_override": {
+        "type": "amiga_delay",
+        "delay_steps": 2,
+        "wet_volume": 0.05
+      },
       "rows": [
-        ["-","D","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],
-        ["-","D","-","-"],["-","-","-","H"],["-","A","-","-"],["-","-","-","H"],
-        ["-","F","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],
-        ["-","D","-","-"],["-","-","-","H"],["-","C","-","-"],["-","-","-","KH"]
+        ["-", "E2", "-", "K"], ["-", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "-", "B4", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["-", "E2", "-", "K"], ["-", "-", "-", "-"], ["-", "E2", "G4", "K"], ["-", "-", "-", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "-"],
+        ["-", "E2", "-", "K"], ["-", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "-", "B4", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["-", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "E2", "B4", "K"], ["-", "-", "E5", "S"], ["-", "E2", "G5", "K"], ["-", "-", "B5", "S"]
       ]
     },
     {
-      "id": "sec_2", "label": "A1", "volume_scale": 0.9, "type": "normal",
+      "id": "sec_2",
+      "label": "Intro_DoubleKick_68_Am",
+      "volume_scale": 0.8,
+      "type": "normal",
       "rows": [
-        ["D","D","-","K"],["-","-","-","H"],["D","-","-","-"],["-","-","-","H"],
-        ["F","F","-","K"],["-","-","-","H"],["-","F","-","-"],["-","-","-","H"],
-        ["A","A","-","K"],["-","-","-","H"],["A","-","-","-"],["-","-","-","H"],
-        ["G","G","-","K"],["-","-","-","H"],["-","A","-","-"],["-","-","-","KH"]
+        ["-", "A1", "-", "K"], ["-", "A1", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["-", "A1", "-", "K"], ["-", "-", "-", "-"], ["-", "A1", "A4", "K"], ["-", "-", "-", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "-"],
+        ["-", "A1", "-", "K"], ["-", "A1", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["-", "A1", "-", "K"], ["-", "-", "A4", "S"], ["-", "A1", "C5", "K"], ["-", "-", "E5", "S"], ["-", "A1", "A5", "K"], ["-", "-", "C6", "S"]
       ]
     },
     {
-      "id": "sec_3", "label": "A2", "volume_scale": 0.95, "type": "normal",
+      "id": "sec_3",
+      "label": "Intro_DoubleKick_68_D_sharp_dim",
+      "volume_scale": 0.8,
+      "type": "normal",
       "rows": [
-        ["D","D","-","K"],["-","F","-","H"],["D","-","-","-"],["-","D","-","H"],
-        ["F","F","-","K"],["-","A","-","H"],["-","F","-","-"],["-","F","-","H"],
-        ["A","A","-","K"],["-","C","-","H"],["A","-","-","-"],["-","A","-","H"],
-        ["G","G","-","K"],["-","Bb","-","H"],["-","A","-","-"],["-","G","-","KH"]
+        ["-", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["-", "D#2", "-", "K"], ["-", "-", "-", "-"], ["-", "D#2", "A4", "K"], ["-", "-", "-", "S"], ["-", "-", "F#5", "S"], ["-", "-", "-", "-"],
+        ["-", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["-", "D#2", "-", "K"], ["-", "-", "A4", "S"], ["-", "D#2", "C5", "K"], ["-", "-", "F#5", "S"], ["-", "D#2", "A5", "K"], ["-", "-", "C6", "S"]
       ]
     },
     {
-      "id": "sec_4", "label": "B1", "volume_scale": 0.9, "type": "normal",
+      "id": "sec_4",
+      "label": "Intro_DoubleKick_68_B",
+      "volume_scale": 0.8,
+      "type": "normal",
       "rows": [
-        ["Bb","Bb","-","K"],["-","-","-","H"],["Bb","-","-","-"],["-","-","-","H"],
-        ["A","A","-","K"],["-","-","-","H"],["-","A","-","-"],["-","-","-","H"],
-        ["G","G","-","K"],["-","-","-","H"],["G","-","-","-"],["-","-","-","H"],
-        ["F","F","-","K"],["-","-","-","H"],["-","A","-","-"],["-","-","-","KH"]
+        ["-", "B1", "-", "K"], ["-", "B1", "-", "K"], ["-", "-", "F#4", "S"], ["-", "-", "B4", "S"], ["-", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["-", "B1", "-", "K"], ["-", "-", "-", "-"], ["-", "B1", "F#4", "K"], ["-", "-", "-", "S"], ["-", "-", "D#5", "S"], ["-", "-", "-", "-"],
+        ["-", "B1", "-", "K"], ["-", "B1", "-", "K"], ["-", "-", "F#4", "S"], ["-", "-", "B4", "S"], ["-", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["-", "B1", "-", "K"], ["-", "-", "F#4", "S"], ["-", "B1", "B4", "K"], ["-", "-", "D#5", "S"], ["-", "B1", "F#5", "K"], ["-", "-", "B5", "S"]
       ]
     },
     {
-      "id": "sec_5", "label": "B2", "volume_scale": 0.95, "type": "normal",
+      "id": "sec_5",
+      "label": "Theme_Heavy_68_Em",
+      "volume_scale": 0.95,
+      "type": "normal",
       "rows": [
-        ["Bb","Bb","-","K"],["-","D","-","H"],["Bb","-","-","-"],["-","Bb","-","H"],
-        ["A","A","-","K"],["-","C","-","H"],["-","A","-","-"],["-","E","-","H"],
-        ["G","G","-","K"],["-","Bb","-","H"],["G","-","-","-"],["-","D","-","H"],
-        ["F","F","-","K"],["-","A","-","H"],["-","C","-","-"],["-","F","-","KH"]
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "-", "B4", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["B4", "E2", "-", "K"], ["-", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "-", "B4", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["G4", "E2", "-", "K"], ["-", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "-", "B4", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["B4", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "-", "B4", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_6", "label": "Br1", "volume_scale": 0.95, "type": "brk",
+      "id": "sec_6",
+      "label": "Theme_Heavy_68_Am",
+      "volume_scale": 0.95,
+      "type": "normal",
       "rows": [
-        ["D","D","-","K"],["-","F","-","H"],["-","-","-","-"],["-","D","-","H"],
-        ["-","A","-","-"],["-","F","-","H"],["-","A","-","-"],["-","D","-","H"],
-        ["-","F","-","-"],["-","C","-","H"],["-","-","-","-"],["-","F","-","H"],
-        ["-","D","-","-"],["-","A","-","H"],["-","D","-","-"],["-","F","-","KH"]
+        ["C5", "A1", "-", "K"], ["-", "A1", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["A4", "A1", "-", "K"], ["-", "A1", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E4", "A1", "-", "K"], ["-", "A1", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["C5", "A1", "-", "K"], ["A4", "A1", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_7", "label": "C1", "volume_scale": 1.05, "type": "mel",
+      "id": "sec_7",
+      "label": "Theme_Heavy_68_D_sharp_dim",
+      "volume_scale": 0.95,
+      "type": "normal",
       "rows": [
-        ["D","D","F","K"],["-","F","-","H"],["D","-","A","-"],["-","D","-","H"],
-        ["F","F","A","K"],["-","A","-","H"],["-","F","C","-"],["-","F","-","H"],
-        ["A","A","F","K"],["-","C","-","H"],["A","-","A","-"],["-","A","-","H"],
-        ["G","G","D","K"],["-","Bb","-","H"],["-","A","Bb","-"],["-","G","-","KH"]
+        ["F#5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["D#5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["A4", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["F#5", "D#2", "-", "K"], ["D#5", "D#2", "-", "K"], ["-", "-", "A4", "S"], ["-", "-", "C5", "S"], ["-", "-", "F#5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_8", "label": "C2", "volume_scale": 1.1, "type": "mel",
+      "id": "sec_8",
+      "label": "Theme_Heavy_68_B",
+      "volume_scale": 0.95,
+      "type": "normal",
       "rows": [
-        ["D","D","A","K"],["-","F","F","H"],["D","-","D","-"],["-","D","A","H"],
-        ["F","F","C","K"],["-","A","A","H"],["-","F","F","-"],["-","F","C","H"],
-        ["Bb","Bb","F","K"],["-","D","D","H"],["Bb","-","Bb","-"],["-","Bb","F","H"],
-        ["A","A","E","K"],["-","C","C","H"],["-","A","A","-"],["-","A","E","KH"]
+        ["B4", "B1", "-", "K"], ["-", "B1", "-", "K"], ["-", "-", "F#4", "S"], ["-", "-", "B4", "S"], ["-", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["F#4", "B1", "-", "K"], ["-", "B1", "-", "K"], ["-", "-", "F#4", "S"], ["-", "-", "B4", "S"], ["-", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["D#4", "B1", "-", "K"], ["-", "B1", "-", "K"], ["-", "-", "F#4", "S"], ["-", "-", "B4", "S"], ["-", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["B4", "B1", "-", "K"], ["F#4", "B1", "-", "K"], ["-", "-", "F#4", "S"], ["-", "-", "B4", "S"], ["-", "-", "D#5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_9", "label": "C3", "volume_scale": 1.15, "type": "mel",
+      "id": "sec_9",
+      "label": "Anticlimax_68_Em",
+      "volume_scale": 1.1,
+      "type": "normal",
+      "section_effects": [
+        { "row_start": 0, "row_end": 23, "channel": "lead", "effect": "portamento", "target_note": "E6", "duration_steps": 24 }
+      ],
       "rows": [
-        ["F","F","C","K"],["A","A","A","KH"],["F","F","F","K"],["A","A","C","H"],
-        ["E","E","B","K"],["G","G","G","KH"],["E","E","E","K"],["G","G","B","H"],
-        ["D","D","A","K"],["F","F","F","KH"],["D","D","D","K"],["F","F","A","H"],
-        ["D","D","F","K"],["A","A","D","KH"],["D","D","D","K"],["D","D","D","H"]
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_10", "label": "Cx", "volume_scale": 0.3, "type": "lnk",
+      "id": "sec_10",
+      "label": "Anticlimax_68_Am",
+      "volume_scale": 1.1,
+      "type": "normal",
       "rows": [
-        ["-","A","D","-"],["-","-","-","-"],["-","A","-","-"],["-","F","-","-"],
-        ["-","G","D","-"],["-","-","-","-"],["-","G","-","-"],["-","F","-","-"],
-        ["-","F","A","-"],["-","-","-","-"],["-","F","-","-"],["-","C","-","-"],
-        ["-","D","A","-"],["-","-","-","-"],["-","D","-","-"],["-","D","-","-"]
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_11", "label": "D1", "volume_scale": 0.95, "type": "normal",
+      "id": "sec_11",
+      "label": "Anticlimax_68_D_sharp_dim",
+      "volume_scale": 1.1,
+      "type": "normal",
       "rows": [
-        ["D","D","-","K"],["-","F","-","H"],["D","-","-","-"],["-","A","-","H"],
-        ["C","C","-","K"],["-","Eb","-","H"],["C","-","-","-"],["-","G","-","H"],
-        ["Bb","Bb","-","K"],["-","D","-","H"],["Bb","-","-","-"],["-","F","-","H"],
-        ["A","A","-","K"],["-","C","-","H"],["-","E","-","-"],["-","A","-","KH"]
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_12", "label": "D2", "volume_scale": 1.0, "type": "normal",
+      "id": "sec_12",
+      "label": "Anticlimax_68_B",
+      "volume_scale": 1.1,
+      "type": "normal",
       "rows": [
-        ["D","D","-","K"],["-","F","-","H"],["F","-","-","-"],["-","A","-","H"],
-        ["A","A","-","K"],["-","C","-","H"],["C","-","-","-"],["-","Eb","-","H"],
-        ["Bb","Bb","-","K"],["-","D","-","H"],["D","-","-","-"],["-","F","-","H"],
-        ["A","A","-","K"],["-","C","-","H"],["-","E","-","-"],["-","A","-","KH"]
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_13", "label": "E", "volume_scale": 1.15, "type": "mel",
+      "id": "sec_13",
+      "label": "True_Climax_68_Em",
+      "volume_scale": 1.35,
+      "type": "normal",
+      "channel_overrides": {
+        "lead": { "type": "sawtooth", "octave_multiplier": 1, "volume": 0.45, "envelope": { "attack_ms": 2, "decay_ratio": 0.4, "sustain_level": 0.6, "release_at": 0.8 }, "note_duration_steps": 2 }
+      },
+      "reverb_override": {
+        "type": "hall",
+        "delay_steps": 4,
+        "wet_volume": 0.4
+      },
+      "section_effects": [
+        { "row_start": 0, "row_end": 23, "channel": "lead", "effect": "filter_sweep", "type": "lowpass", "start_hz": 200, "end_hz": 4000 }
+      ],
+      "note": "Instrument Swap: Lead-kanava muuttuu repiväksi saha-aalloksi (sawtooth).",
       "rows": [
-        ["D","D","F","K"],["-","F","A","H"],["D","-","D","-"],["-","D","F","H"],
-        ["F","F","A","K"],["-","A","C","H"],["F","-","F","-"],["-","F","A","H"],
-        ["Bb","Bb","D","K"],["-","D","F","H"],["Bb","-","Bb","-"],["-","Bb","D","H"],
-        ["D","D","F","K"],["-","F","A","H"],["D","-","D","-"],["-","D","D","KH"]
+        ["E5", "E2", "-", "K"], ["G5", "E2", "-", "K"], ["B5", "-", "G4", "S"], ["E6", "-", "B4", "S"], ["B5", "-", "E5", "S"], ["G5", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["G5", "E2", "-", "K"], ["B5", "-", "G4", "S"], ["E6", "-", "B4", "S"], ["B5", "-", "E5", "S"], ["G5", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["F#5", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["A5", "-", "B4", "S"], ["G5", "-", "E5", "S"], ["F#5", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["F#5", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["A5", "-", "B4", "S"], ["G5", "-", "E5", "S"], ["F#5", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_14", "label": "E2", "volume_scale": 1.05, "type": "mel",
+      "id": "sec_14",
+      "label": "True_Climax_68_Am",
+      "volume_scale": 1.35,
+      "type": "normal",
+      "channel_overrides": {
+        "lead": { "type": "sawtooth", "octave_multiplier": 1, "volume": 0.45, "envelope": { "attack_ms": 2, "decay_ratio": 0.4, "sustain_level": 0.6, "release_at": 0.8 }, "note_duration_steps": 2 }
+      },
+      "section_effects": [
+        { "row_start": 0, "row_end": 23, "channel": "lead", "effect": "filter_sweep", "type": "lowpass", "start_hz": 4000, "end_hz": 200 }
+      ],
       "rows": [
-        ["A","A","C","K"],["-","C","E","H"],["A","-","A","-"],["-","A","C","H"],
-        ["G","G","Bb","K"],["-","Bb","D","H"],["G","-","G","-"],["-","G","Bb","H"],
-        ["F","F","A","K"],["-","A","C","H"],["F","-","F","-"],["-","F","A","H"],
-        ["D","D","F","K"],["-","F","A","H"],["C","C","E","K"],["-","D","D","KH"]
+        ["A5", "A1", "-", "K"], ["C6", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["A6", "-", "C5", "S"], ["E6", "-", "E5", "S"], ["C6", "-", "-", "H"],
+        ["A5", "A1", "-", "K"], ["C6", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["A6", "-", "C5", "S"], ["E6", "-", "E5", "S"], ["C6", "-", "-", "H"],
+        ["A5", "A1", "-", "K"], ["B5", "A1", "-", "K"], ["C6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["B5", "-", "-", "H"],
+        ["A5", "A1", "-", "K"], ["B5", "A1", "-", "K"], ["C6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["B5", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_15", "label": "F1", "volume_scale": 1.05, "type": "ret",
+      "id": "sec_15",
+      "label": "True_Climax_68_D_sharp_dim",
+      "volume_scale": 1.35,
+      "type": "normal",
+      "channel_overrides": {
+        "lead": { "type": "sawtooth", "octave_multiplier": 1, "volume": 0.45, "envelope": { "attack_ms": 2, "decay_ratio": 0.4, "sustain_level": 0.6, "release_at": 0.8 }, "note_duration_steps": 2 }
+      },
+      "section_effects": [
+        { "row_start": 0, "row_end": 23, "channel": "lead", "effect": "filter_sweep", "type": "lowpass", "start_hz": 200, "end_hz": 4000 }
+      ],
       "rows": [
-        ["D","D","F","K"],["-","F","-","H"],["D","-","A","-"],["-","D","-","H"],
-        ["F","F","A","K"],["-","A","-","H"],["-","F","C","-"],["-","F","-","H"],
-        ["A","A","F","K"],["-","C","-","H"],["A","-","A","-"],["-","A","-","H"],
-        ["G","G","D","K"],["-","Bb","-","H"],["-","A","Bb","-"],["-","G","-","KH"]
+        ["F#5", "D#2", "-", "K"], ["A5", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["D#6", "-", "C5", "S"], ["C6", "-", "F#5", "S"], ["A5", "-", "-", "H"],
+        ["F#5", "D#2", "-", "K"], ["A5", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["D#6", "-", "C5", "S"], ["C6", "-", "F#5", "S"], ["A5", "-", "-", "H"],
+        ["F#5", "D#2", "-", "K"], ["G5", "D#2", "-", "K"], ["A5", "-", "A4", "S"], ["C6", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["G5", "-", "-", "H"],
+        ["F#5", "D#2", "-", "K"], ["G5", "D#2", "-", "K"], ["A5", "-", "A4", "S"], ["C6", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["G5", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_16", "label": "Fx", "volume_scale": 0.55, "type": "lnk",
+      "id": "sec_16",
+      "label": "True_Climax_68_B",
+      "volume_scale": 1.35,
+      "type": "normal",
+      "channel_overrides": {
+        "lead": { "type": "sawtooth", "octave_multiplier": 1, "volume": 0.45, "envelope": { "attack_ms": 2, "decay_ratio": 0.4, "sustain_level": 0.6, "release_at": 0.8 }, "note_duration_steps": 2 }
+      },
+      "section_effects": [
+        { "row_start": 0, "row_end": 23, "channel": "lead", "effect": "filter_sweep", "type": "lowpass", "start_hz": 4000, "end_hz": 200 }
+      ],
       "rows": [
-        ["-","G","-","K"],["-","-","-","H"],["-","G","-","-"],["-","-","-","H"],
-        ["-","F","-","-"],["-","-","-","H"],["-","F","-","-"],["-","-","-","H"],
-        ["-","D","-","-"],["-","-","-","H"],["-","D","-","-"],["-","-","-","H"],
-        ["-","D","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"]
+        ["D#5", "B1", "-", "K"], ["F#5", "B1", "-", "K"], ["B5", "-", "F#4", "S"], ["D#6", "-", "B4", "S"], ["B5", "-", "D#5", "S"], ["F#5", "-", "-", "H"],
+        ["D#5", "B1", "-", "K"], ["F#5", "B1", "-", "K"], ["B5", "-", "F#4", "S"], ["D#6", "-", "B4", "S"], ["B5", "-", "D#5", "S"], ["F#5", "-", "-", "H"],
+        ["D#5", "B1", "-", "K"], ["E5", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["A5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["E5", "-", "-", "H"],
+        ["D#5", "B1", "-", "K"], ["E5", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["A5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["E5", "-", "-", "H"]
       ]
     },
     {
-      "id": "sec_17", "label": "Outro", "volume_scale": 0.4, "type": "normal",
+      "id": "sec_17",
+      "label": "Anticlimax_Return_68_Em",
+      "volume_scale": 1.1,
+      "type": "normal",
+      "note": "Instrument Swap: Paluu normaaliin neliöaalto-leadiin tapahtuu automaattisesti, koska override puuttuu.",
       "rows": [
-        ["-","-","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],
-        ["-","-","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],
-        ["-","-","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"],
-        ["-","-","-","-"],["-","-","-","H"],["-","-","-","-"],["-","-","-","H"]
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["E5", "E2", "-", "K"], ["-", "E2", "-", "K"], ["G5", "-", "G4", "S"], ["F#5", "-", "B4", "S"], ["E5", "-", "E5", "S"], ["-", "-", "-", "H"]
+      ]
+    },
+    {
+      "id": "sec_18",
+      "label": "Anticlimax_Return_68_Am",
+      "volume_scale": 1.1,
+      "type": "normal",
+      "rows": [
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["C6", "A1", "-", "K"], ["-", "A1", "-", "K"], ["E6", "-", "A4", "S"], ["D6", "-", "C5", "S"], ["C6", "-", "E5", "S"], ["-", "-", "-", "H"]
+      ]
+    },
+    {
+      "id": "sec_19",
+      "label": "Anticlimax_Return_68_D_sharp_dim",
+      "volume_scale": 1.1,
+      "type": "normal",
+      "rows": [
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"],
+        ["A5", "D#2", "-", "K"], ["-", "D#2", "-", "K"], ["C6", "-", "A4", "S"], ["B5", "-", "C5", "S"], ["A5", "-", "F#5", "S"], ["-", "-", "-", "H"]
+      ]
+    },
+    {
+      "id": "sec_20",
+      "label": "Anticlimax_Return_68_B",
+      "volume_scale": 1.1,
+      "type": "normal",
+      "rows": [
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"],
+        ["B5", "B1", "-", "K"], ["-", "B1", "-", "K"], ["F#5", "-", "F#4", "S"], ["G5", "-", "B4", "S"], ["F#5", "-", "D#5", "S"], ["-", "-", "-", "H"]
+      ]
+    },
+    {
+      "id": "sec_21",
+      "label": "Outro_68_Em",
+      "volume_scale": 0.8,
+      "type": "normal",
+      "reverb_override": {
+        "type": "hall",
+        "delay_steps": 6,
+        "wet_volume": 0.5
+      },
+      "rows": [
+        ["-", "E2", "-", "K"], ["-", "E2", "-", "K"], ["-", "-", "G4", "S"], ["-", "-", "B4", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "H"],
+        ["-", "E2", "-", "K"], ["-", "-", "-", "-"], ["-", "E2", "G4", "K"], ["-", "-", "-", "S"], ["-", "-", "E5", "S"], ["-", "-", "-", "-"],
+        ["-", "E2", "-", "K"], ["-", "-", "-", "-"], ["-", "-", "G4", "-"], ["-", "-", "-", "-"], ["-", "-", "B4", "-"], ["-", "-", "-", "-"],
+        ["-", "E1", "-", "K"], ["-", "-", "-", "-"], ["-", "-", "-", "-"], ["-", "-", "-", "-"], ["-", "-", "-", "-"], ["-", "-", "-", "-"]
       ]
     }
   ]
