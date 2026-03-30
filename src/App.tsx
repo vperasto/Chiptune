@@ -162,6 +162,8 @@ export default function App() {
   const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
   const [library, setLibrary] = useState<SongData[]>([]);
   const [showJsonEditor, setShowJsonEditor] = useState(false);
+  const [showInstruments, setShowInstruments] = useState(false);
+  const [inspectedSectionIndex, setInspectedSectionIndex] = useState<number | null>(null);
   const [jsonText, setJsonText] = useState('');
   const [jsonError, setJsonError] = useState('');
   const isEditingJson = useRef(false);
@@ -178,6 +180,105 @@ export default function App() {
   const [renameValue, setRenameValue] = useState('');
   const [mutedChannels, setMutedChannels] = useState<boolean[]>([false, false, false, false]);
   const [audioState, setAudioState] = useState<string>('uninitialized');
+
+  const updateChannelConfig = (channelName: string, field: string, value: any) => {
+    setSong(prev => {
+      const newSong = { ...prev };
+      const newChannels = { ...newSong.channels };
+      const channel = { ...newChannels[channelName] };
+
+      if (field.startsWith('envelope.')) {
+        const envField = field.split('.')[1];
+        channel.envelope = { ...(channel.envelope || { attack_ms: 0 }), [envField]: value };
+      } else {
+        (channel as any)[field] = value;
+      }
+
+      newChannels[channelName] = channel;
+      newSong.channels = newChannels;
+      return newSong;
+    });
+  };
+
+  const updateGlobalReverb = (field: string, value: any) => {
+    setSong(prev => {
+      const newSong = { ...prev };
+      const newReverb = { ...(newSong.reverb || { type: 'hall', delay_steps: 3, wet_volume: 0.2 }) };
+      (newReverb as any)[field] = value;
+      newSong.reverb = newReverb as any;
+      return newSong;
+    });
+  };
+
+  const updateSectionConfig = (sectionIdx: number, field: string, value: any) => {
+    setSong(prev => {
+      const newSong = { ...prev };
+      const newSections = [...newSong.sections];
+      const section = { ...newSections[sectionIdx] };
+      
+      if (value === undefined) {
+        delete (section as any)[field];
+      } else {
+        (section as any)[field] = value;
+      }
+      
+      newSections[sectionIdx] = section;
+      newSong.sections = newSections;
+      return newSong;
+    });
+  };
+
+  const updateSectionReverb = (sectionIdx: number, field: string, value: any) => {
+    setSong(prev => {
+      const newSong = { ...prev };
+      const newSections = [...newSong.sections];
+      const section = { ...newSections[sectionIdx] };
+      
+      if (value === undefined) {
+        delete section.reverb_override;
+      } else {
+        const newReverb = { ...(section.reverb_override || { type: 'hall', delay_steps: 3, wet_volume: 0.2 }) };
+        (newReverb as any)[field] = value;
+        section.reverb_override = newReverb as any;
+      }
+      
+      newSections[sectionIdx] = section;
+      newSong.sections = newSections;
+      return newSong;
+    });
+  };
+
+  const updateSectionChannelOverride = (sectionIdx: number, channelName: string, field: string, value: any) => {
+    setSong(prev => {
+      const newSong = { ...prev };
+      const newSections = [...newSong.sections];
+      const section = { ...newSections[sectionIdx] };
+      const overrides = { ...(section.channel_overrides || {}) };
+      
+      if (value === undefined) {
+        delete overrides[channelName];
+        if (Object.keys(overrides).length === 0) {
+          delete section.channel_overrides;
+        } else {
+          section.channel_overrides = overrides;
+        }
+      } else {
+        const channelOverride = { ...(overrides[channelName] || {}) };
+        if (field.startsWith('envelope.')) {
+          const envField = field.split('.')[1];
+          channelOverride.envelope = { ...(channelOverride.envelope || {}), [envField]: value };
+        } else {
+          (channelOverride as any)[field] = value;
+        }
+        overrides[channelName] = channelOverride;
+        section.channel_overrides = overrides;
+      }
+      
+      newSections[sectionIdx] = section;
+      newSong.sections = newSections;
+      return newSong;
+    });
+  };
 
   const timerRef = useRef<number | null>(null);
   const nextNoteTimeRef = useRef(0);
@@ -754,7 +855,15 @@ export default function App() {
                 <Plus size={20} className={isLoopingSection ? "rotate-45 transition-transform" : "transition-transform"} />
               </EInkButton>
               <EInkButton 
-                onClick={() => setShowJsonEditor(!showJsonEditor)} 
+                onClick={() => { setShowInstruments(!showInstruments); setShowJsonEditor(false); setInspectedSectionIndex(null); }} 
+                active={showInstruments}
+                className="flex items-center justify-center p-2" 
+                title="Instruments"
+              >
+                <Settings size={20} />
+              </EInkButton>
+              <EInkButton 
+                onClick={() => { setShowJsonEditor(!showJsonEditor); setShowInstruments(false); setInspectedSectionIndex(null); }} 
                 active={showJsonEditor}
                 className="flex items-center justify-center p-2" 
                 title="JSON Editor"
@@ -849,7 +958,7 @@ export default function App() {
       </header>
 
       <main className="flex-1 overflow-hidden p-4 md:p-6 flex gap-4">
-        <div className={`h-full transition-all duration-300 ${showJsonEditor ? 'w-2/3' : 'w-full max-w-7xl mx-auto'}`}>
+        <div className={`h-full transition-all duration-300 ${(showJsonEditor || showInstruments || inspectedSectionIndex !== null) ? 'w-2/3' : 'w-full max-w-7xl mx-auto'}`}>
           {/* Tracker Grid */}
           <div className="border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden flex flex-col h-full">
             <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr] border-b-4 border-black bg-black text-white font-bold text-xs uppercase sticky top-0 z-30">
@@ -963,6 +1072,17 @@ export default function App() {
                           <Copy size={14} />
                         </button>
                         <button 
+                          onClick={() => {
+                            setInspectedSectionIndex(sIdx);
+                            setShowInstruments(false);
+                            setShowJsonEditor(false);
+                          }}
+                          className={`p-1 hover:bg-black hover:text-white transition-colors ${inspectedSectionIndex === sIdx ? 'bg-black text-white' : ''}`}
+                          title="Section Settings"
+                        >
+                          <Settings size={14} />
+                        </button>
+                        <button 
                           onClick={() => duplicateAsLink(sIdx)} 
                           className="p-1 hover:bg-black hover:text-white transition-colors"
                           title="Duplicate as Link (Changes sync with original)"
@@ -1065,6 +1185,400 @@ export default function App() {
                 {jsonError}
               </div>
             )}
+          </div>
+        )}
+
+        {showInstruments && (
+          <div className="w-1/3 h-full flex flex-col border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden transition-all duration-300">
+            <div className="bg-black text-white p-2 font-bold uppercase flex justify-between items-center text-xs">
+              <span className="flex items-center gap-2"><Settings size={14} /> Global Settings</span>
+              <button onClick={() => setShowInstruments(false)} className="hover:text-red-400 transition-colors">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-[#f4f4f2] space-y-6">
+              
+              {/* Master Reverb */}
+              <div className="border-2 border-black bg-white p-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                <div className="flex justify-between items-center mb-3 border-b-2 border-black pb-1">
+                  <h3 className="font-black uppercase text-sm">Master Reverb</h3>
+                  <button 
+                    onClick={() => {
+                      if (song.reverb) {
+                        const newSong = { ...song };
+                        delete newSong.reverb;
+                        setSong(newSong);
+                      } else {
+                        updateGlobalReverb('type', 'hall');
+                      }
+                    }}
+                    className={`text-[10px] font-bold px-2 py-0.5 border-2 border-black ${song.reverb ? 'bg-black text-white' : 'bg-white text-black'}`}
+                  >
+                    {song.reverb ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+                
+                {song.reverb && (
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold uppercase">Reverb Type</label>
+                      <select 
+                        value={song.reverb.type}
+                        onChange={(e) => updateGlobalReverb('type', e.target.value)}
+                        className="w-full px-2 py-1 border-2 border-black font-bold text-sm bg-transparent focus:outline-none cursor-pointer"
+                      >
+                        <option value="amiga_delay">Amiga Delay</option>
+                        <option value="hall">Hall</option>
+                        <option value="room">Room</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold uppercase">Wet Volume ({Math.round((song.reverb.wet_volume ?? 0.2) * 100)}%)</label>
+                        <input 
+                          type="range" min="0" max="1" step="0.01" 
+                          value={song.reverb.wet_volume ?? 0.2}
+                          onChange={(e) => updateGlobalReverb('wet_volume', parseFloat(e.target.value))}
+                          className="w-full accent-black"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold uppercase">Delay Steps ({song.reverb.delay_steps ?? 3})</label>
+                        <input 
+                          type="range" min="1" max="16" step="1" 
+                          value={song.reverb.delay_steps ?? 3}
+                          onChange={(e) => updateGlobalReverb('delay_steps', parseInt(e.target.value))}
+                          className="w-full accent-black"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Channels */}
+              {Object.entries(song.channels).map(([channelName, config]) => (
+                <div key={channelName} className="border-2 border-black bg-white p-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                  <div className="flex justify-between items-center mb-3 border-b-2 border-black pb-1">
+                    <h3 className="font-black uppercase text-sm">{channelName}</h3>
+                    <button 
+                      onClick={() => {
+                        audioEngine.setReverb(song.reverb);
+                        if (channelName === 'percussion') {
+                          // Play a default kick drum for percussion channel test
+                          const percConfig = song.perc_types['K'];
+                          if (percConfig) {
+                            audioEngine.playPercussion(percConfig, audioEngine.currentTime, song, 1, config.panning);
+                          }
+                        } else {
+                          // Play C4 for melodic channels
+                          const freq = song.note_frequencies_hz['C4'] || 261.63;
+                          audioEngine.playNote(freq, config, audioEngine.currentTime, 500, 1);
+                        }
+                      }}
+                      className="text-[10px] font-bold px-2 py-0.5 border-2 border-black bg-[#f4f4f2] hover:bg-black hover:text-white transition-colors flex items-center gap-1"
+                      title="Test Sound"
+                    >
+                      <Play size={10} fill="currentColor" /> TEST
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold uppercase">Oscillator Type</label>
+                      <select 
+                        value={config.type}
+                        onChange={(e) => updateChannelConfig(channelName, 'type', e.target.value)}
+                        className="w-full px-2 py-1 border-2 border-black font-bold text-sm bg-transparent focus:outline-none cursor-pointer"
+                      >
+                        <option value="square">Square</option>
+                        <option value="sawtooth">Sawtooth</option>
+                        <option value="triangle">Triangle</option>
+                        <option value="sine">Sine</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold uppercase">Volume ({Math.round(config.volume * 100)}%)</label>
+                        <input 
+                          type="range" min="0" max="1" step="0.01" 
+                          value={config.volume}
+                          onChange={(e) => updateChannelConfig(channelName, 'volume', parseFloat(e.target.value))}
+                          className="w-full accent-black"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold uppercase">Pan ({config.panning > 0 ? 'R' : config.panning < 0 ? 'L' : 'C'} {Math.abs(Math.round((config.panning || 0) * 100))})</label>
+                        <input 
+                          type="range" min="-1" max="1" step="0.01" 
+                          value={config.panning || 0}
+                          onChange={(e) => updateChannelConfig(channelName, 'panning', parseFloat(e.target.value))}
+                          className="w-full accent-black"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold uppercase">Octave Shift</label>
+                      <input 
+                        type="range" min="-3" max="3" step="1" 
+                        value={config.octave_multiplier === 0.125 ? -3 : config.octave_multiplier === 0.25 ? -2 : config.octave_multiplier === 0.5 ? -1 : config.octave_multiplier === 1 ? 0 : config.octave_multiplier === 2 ? 1 : config.octave_multiplier === 4 ? 2 : config.octave_multiplier === 8 ? 3 : 0}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          const mult = val === -3 ? 0.125 : val === -2 ? 0.25 : val === -1 ? 0.5 : val === 0 ? 1 : val === 1 ? 2 : val === 2 ? 4 : 8;
+                          updateChannelConfig(channelName, 'octave_multiplier', mult);
+                        }}
+                        className="w-full accent-black"
+                      />
+                      <div className="text-[10px] font-bold text-center">{config.octave_multiplier}x</div>
+                    </div>
+
+                    <div className="border-t-2 border-black pt-2 mt-2">
+                      <label className="text-[10px] font-bold uppercase mb-2 block">Envelope (ADSR)</label>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold uppercase opacity-70">Attack ({(config.envelope || {}).attack_ms || 0}ms)</label>
+                          <input 
+                            type="range" min="0" max="500" step="1" 
+                            value={(config.envelope || {}).attack_ms || 0}
+                            onChange={(e) => updateChannelConfig(channelName, 'envelope.attack_ms', parseInt(e.target.value))}
+                            className="w-full accent-black"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold uppercase opacity-70">Decay ({(((config.envelope || {}).decay_ratio || 0.1) * 100).toFixed(0)}%)</label>
+                          <input 
+                            type="range" min="0.01" max="1" step="0.01" 
+                            value={(config.envelope || {}).decay_ratio || 0.1}
+                            onChange={(e) => updateChannelConfig(channelName, 'envelope.decay_ratio', parseFloat(e.target.value))}
+                            className="w-full accent-black"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold uppercase opacity-70">Sustain ({(((config.envelope || {}).sustain_level || 0.5) * 100).toFixed(0)}%)</label>
+                          <input 
+                            type="range" min="0" max="1" step="0.01" 
+                            value={(config.envelope || {}).sustain_level || 0.5}
+                            onChange={(e) => updateChannelConfig(channelName, 'envelope.sustain_level', parseFloat(e.target.value))}
+                            className="w-full accent-black"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold uppercase opacity-70">Release ({(((config.envelope || {}).release_at || 0.1) * 100).toFixed(0)}%)</label>
+                          <input 
+                            type="range" min="0.1" max="1" step="0.01" 
+                            value={(config.envelope || {}).release_at || 0.1}
+                            onChange={(e) => updateChannelConfig(channelName, 'envelope.release_at', parseFloat(e.target.value))}
+                            className="w-full accent-black"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {inspectedSectionIndex !== null && song.sections[inspectedSectionIndex] && (
+          <div className="w-1/3 h-full flex flex-col border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden transition-all duration-300">
+            <div className="bg-black text-white p-2 font-bold uppercase flex justify-between items-center text-xs">
+              <span className="flex items-center gap-2"><Settings size={14} /> Section: {song.sections[inspectedSectionIndex].label}</span>
+              <button onClick={() => setInspectedSectionIndex(null)} className="hover:text-red-400 transition-colors">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-[#f4f4f2] space-y-6">
+              
+              {/* Volume Scale */}
+              <div className="border-2 border-black bg-white p-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                <h3 className="font-black uppercase text-sm mb-3 border-b-2 border-black pb-1">Section Volume</h3>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold uppercase">Volume Scale ({Math.round((song.sections[inspectedSectionIndex].volume_scale || 1) * 100)}%)</label>
+                  <input 
+                    type="range" min="0.1" max="2" step="0.1" 
+                    value={song.sections[inspectedSectionIndex].volume_scale || 1}
+                    onChange={(e) => updateSectionConfig(inspectedSectionIndex, 'volume_scale', parseFloat(e.target.value))}
+                    className="w-full accent-black"
+                  />
+                </div>
+              </div>
+
+              {/* Reverb Override */}
+              <div className="border-2 border-black bg-white p-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                <div className="flex justify-between items-center mb-3 border-b-2 border-black pb-1">
+                  <h3 className="font-black uppercase text-sm">Reverb Override</h3>
+                  <button 
+                    onClick={() => {
+                      if (song.sections[inspectedSectionIndex].reverb_override) {
+                        updateSectionReverb(inspectedSectionIndex, 'type', undefined); // Remove override
+                      } else {
+                        updateSectionReverb(inspectedSectionIndex, 'type', 'hall'); // Add override
+                      }
+                    }}
+                    className={`text-[10px] font-bold px-2 py-0.5 border-2 border-black ${song.sections[inspectedSectionIndex].reverb_override ? 'bg-black text-white' : 'bg-white text-black'}`}
+                  >
+                    {song.sections[inspectedSectionIndex].reverb_override ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+                
+                {song.sections[inspectedSectionIndex].reverb_override && (
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold uppercase">Reverb Type</label>
+                      <select 
+                        value={song.sections[inspectedSectionIndex].reverb_override?.type || 'hall'}
+                        onChange={(e) => updateSectionReverb(inspectedSectionIndex, 'type', e.target.value)}
+                        className="w-full px-2 py-1 border-2 border-black font-bold text-sm bg-transparent focus:outline-none cursor-pointer"
+                      >
+                        <option value="amiga_delay">Amiga Delay</option>
+                        <option value="hall">Hall</option>
+                        <option value="room">Room</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold uppercase">Wet Volume ({Math.round((song.sections[inspectedSectionIndex].reverb_override?.wet_volume ?? 0.2) * 100)}%)</label>
+                        <input 
+                          type="range" min="0" max="1" step="0.01" 
+                          value={song.sections[inspectedSectionIndex].reverb_override?.wet_volume ?? 0.2}
+                          onChange={(e) => updateSectionReverb(inspectedSectionIndex, 'wet_volume', parseFloat(e.target.value))}
+                          className="w-full accent-black"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold uppercase">Delay Steps ({song.sections[inspectedSectionIndex].reverb_override?.delay_steps ?? 3})</label>
+                        <input 
+                          type="range" min="1" max="16" step="1" 
+                          value={song.sections[inspectedSectionIndex].reverb_override?.delay_steps ?? 3}
+                          onChange={(e) => updateSectionReverb(inspectedSectionIndex, 'delay_steps', parseInt(e.target.value))}
+                          className="w-full accent-black"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Channel Overrides */}
+              <div className="border-2 border-black bg-white p-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                <h3 className="font-black uppercase text-sm mb-3 border-b-2 border-black pb-1">Channel Overrides</h3>
+                <div className="space-y-4">
+                  {Object.entries(song.channels).map(([channelName, globalConfig]) => {
+                    const isOverridden = !!song.sections[inspectedSectionIndex].channel_overrides?.[channelName];
+                    const config = isOverridden ? song.sections[inspectedSectionIndex].channel_overrides![channelName] : globalConfig;
+                    
+                    return (
+                      <div key={channelName} className="border-2 border-black p-2">
+                        <div className="flex justify-between items-center mb-2 border-b-2 border-black pb-1">
+                          <h4 className="font-bold uppercase text-xs">{channelName}</h4>
+                          <button 
+                            onClick={() => {
+                              if (isOverridden) {
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'type', undefined); // Remove
+                              } else {
+                                // Add override by copying global config
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'type', globalConfig.type);
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'volume', globalConfig.volume);
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'panning', globalConfig.panning || 0);
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.attack_ms', globalConfig.envelope.attack_ms);
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.decay_ratio', globalConfig.envelope.decay_ratio);
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.sustain_level', globalConfig.envelope.sustain_level);
+                                updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.release_at', globalConfig.envelope.release_at);
+                              }
+                            }}
+                            className={`text-[9px] font-bold px-1.5 py-0.5 border-2 border-black ${isOverridden ? 'bg-black text-white' : 'bg-white text-black'}`}
+                          >
+                            {isOverridden ? 'OVERRIDE ON' : 'OVERRIDE OFF'}
+                          </button>
+                        </div>
+
+                        {isOverridden && (
+                          <div className="space-y-3 mt-2">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] font-bold uppercase">Oscillator Type</label>
+                              <select 
+                                value={config.type}
+                                onChange={(e) => updateSectionChannelOverride(inspectedSectionIndex, channelName, 'type', e.target.value)}
+                                className="w-full px-1 py-0.5 border-2 border-black font-bold text-xs bg-transparent focus:outline-none cursor-pointer"
+                              >
+                                <option value="square">Square</option>
+                                <option value="sawtooth">Sawtooth</option>
+                                <option value="triangle">Triangle</option>
+                                <option value="sine">Sine</option>
+                              </select>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[9px] font-bold uppercase">Vol ({Math.round(config.volume * 100)}%)</label>
+                                <input 
+                                  type="range" min="0" max="1" step="0.01" 
+                                  value={config.volume}
+                                  onChange={(e) => updateSectionChannelOverride(inspectedSectionIndex, channelName, 'volume', parseFloat(e.target.value))}
+                                  className="w-full accent-black"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[9px] font-bold uppercase">Pan ({config.panning > 0 ? 'R' : config.panning < 0 ? 'L' : 'C'} {Math.abs(Math.round((config.panning || 0) * 100))})</label>
+                                <input 
+                                  type="range" min="-1" max="1" step="0.01" 
+                                  value={config.panning || 0}
+                                  onChange={(e) => updateSectionChannelOverride(inspectedSectionIndex, channelName, 'panning', parseFloat(e.target.value))}
+                                  className="w-full accent-black"
+                                />
+                              </div>
+                            </div>
+                            
+                            <div className="border-t-2 border-black pt-1 mt-1">
+                              <label className="text-[9px] font-bold uppercase mb-1 block">Envelope</label>
+                              <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                                <div className="flex flex-col gap-0.5">
+                                  <label className="text-[8px] font-bold uppercase opacity-70">A ({(config.envelope || {}).attack_ms || 0}ms)</label>
+                                  <input 
+                                    type="range" min="0" max="500" step="1" 
+                                    value={(config.envelope || {}).attack_ms || 0}
+                                    onChange={(e) => updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.attack_ms', parseInt(e.target.value))}
+                                    className="w-full accent-black"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <label className="text-[8px] font-bold uppercase opacity-70">D ({(((config.envelope || {}).decay_ratio || 0.1) * 100).toFixed(0)}%)</label>
+                                  <input 
+                                    type="range" min="0.01" max="1" step="0.01" 
+                                    value={(config.envelope || {}).decay_ratio || 0.1}
+                                    onChange={(e) => updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.decay_ratio', parseFloat(e.target.value))}
+                                    className="w-full accent-black"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <label className="text-[8px] font-bold uppercase opacity-70">S ({(((config.envelope || {}).sustain_level || 0.5) * 100).toFixed(0)}%)</label>
+                                  <input 
+                                    type="range" min="0" max="1" step="0.01" 
+                                    value={(config.envelope || {}).sustain_level || 0.5}
+                                    onChange={(e) => updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.sustain_level', parseFloat(e.target.value))}
+                                    className="w-full accent-black"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <label className="text-[8px] font-bold uppercase opacity-70">R ({(((config.envelope || {}).release_at || 0.1) * 100).toFixed(0)}%)</label>
+                                  <input 
+                                    type="range" min="0.1" max="1" step="0.01" 
+                                    value={(config.envelope || {}).release_at || 0.1}
+                                    onChange={(e) => updateSectionChannelOverride(inspectedSectionIndex, channelName, 'envelope.release_at', parseFloat(e.target.value))}
+                                    className="w-full accent-black"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+            </div>
           </div>
         )}
       </main>
