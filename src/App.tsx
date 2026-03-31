@@ -180,6 +180,21 @@ export default function App() {
   const [renameValue, setRenameValue] = useState('');
   const [mutedChannels, setMutedChannels] = useState<boolean[]>([false, false, false, false]);
   const [audioState, setAudioState] = useState<string>('uninitialized');
+  
+  const [presets, setPresets] = useState<Record<string, ChannelConfig>>({});
+  const [savingPresetFor, setSavingPresetFor] = useState<string | null>(null);
+  const [newPresetName, setNewPresetName] = useState('');
+
+  useEffect(() => {
+    const savedPresets = localStorage.getItem('chiptune_presets');
+    if (savedPresets) {
+      try {
+        setPresets(JSON.parse(savedPresets));
+      } catch (e) {
+        console.error('Failed to load presets', e);
+      }
+    }
+  }, []);
 
   const updateChannelConfig = (channelName: string, field: string, value: any) => {
     setSong(prev => {
@@ -278,6 +293,38 @@ export default function App() {
       newSong.sections = newSections;
       return newSong;
     });
+  };
+
+  const handleSavePreset = (channelName: string) => {
+    if (!newPresetName.trim()) return;
+    const configToSave = song.channels[channelName];
+    const newPresets = { ...presets, [newPresetName.trim()]: configToSave };
+    setPresets(newPresets);
+    localStorage.setItem('chiptune_presets', JSON.stringify(newPresets));
+    setSavingPresetFor(null);
+    setNewPresetName('');
+    showToast(`Preset "${newPresetName.trim()}" saved`, 'success');
+  };
+
+  const loadPreset = (channelName: string, presetName: string) => {
+    const preset = presets[presetName];
+    if (!preset) return;
+    setSong(prev => ({
+      ...prev,
+      channels: {
+        ...prev.channels,
+        [channelName]: { ...preset }
+      }
+    }));
+    showToast(`Loaded preset "${presetName}"`, 'success');
+  };
+
+  const deletePreset = (presetName: string) => {
+    const newPresets = { ...presets };
+    delete newPresets[presetName];
+    setPresets(newPresets);
+    localStorage.setItem('chiptune_presets', JSON.stringify(newPresets));
+    showToast(`Preset "${presetName}" deleted`, 'info');
   };
 
   const timerRef = useRef<number | null>(null);
@@ -393,6 +440,23 @@ export default function App() {
     }
     return target;
   }, []);
+
+  const totalDurationSeconds = useMemo(() => {
+    let totalSeconds = 0;
+    for (const section of song.sections) {
+      const targetSection = resolveTargetSection(section, song.sections);
+      const activeTempo = section.tempo || song.tempo;
+      const secondsPerStep = 60 / (activeTempo * 4);
+      totalSeconds += targetSection.rows.length * secondsPerStep;
+    }
+    return totalSeconds;
+  }, [song, resolveTargetSection]);
+
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
 
   const scheduleNote = useCallback((step: number, sectionIdx: number, time: number, stepDurationMs: number) => {
     const currentSong = songRef.current;
@@ -642,6 +706,29 @@ export default function App() {
     downloadAnchorNode.remove();
   };
 
+  const [isExportingWav, setIsExportingWav] = useState(false);
+
+  const exportWav = async () => {
+    setIsExportingWav(true);
+    try {
+      const blob = await audioEngine.exportWav(song, totalDurationSeconds, mutedChannels);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${song.name}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("WAV exported successfully", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to export WAV", "error");
+    } finally {
+      setIsExportingWav(false);
+    }
+  };
+
   const updateCell = useCallback((sectionIdx: number, rowIdx: number, colIdx: number, value: string) => {
     const newSections = [...song.sections];
     newSections[sectionIdx].rows[rowIdx][colIdx] = value;
@@ -816,7 +903,13 @@ export default function App() {
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-40 mb-1">Chip-Tune</div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-40">Chip-Tune</div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-40">•</div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-40" title="Estimated duration">
+                  Duration: {formatDuration(totalDurationSeconds)}
+                </div>
+              </div>
               <input
                 className="text-3xl md:text-4xl font-black uppercase tracking-tighter mb-1 bg-transparent border-none outline-none w-full focus:ring-2 focus:ring-black/10"
                 value={song.name}
@@ -870,8 +963,11 @@ export default function App() {
               >
                 <Code size={20} />
               </EInkButton>
-              <EInkButton onClick={exportSong} className="flex items-center justify-center p-2" title="Export">
+              <EInkButton onClick={exportSong} className="flex items-center justify-center p-2" title="Export JSON">
                 <Download size={20} />
+              </EInkButton>
+              <EInkButton onClick={exportWav} disabled={isExportingWav} className="flex items-center justify-center p-2" title="Export WAV">
+                {isExportingWav ? <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" /> : <Music size={20} />}
               </EInkButton>
               <EInkButton onClick={saveToLibrary} className="flex items-center justify-center p-2" title="Save">
                 <Save size={20} />
@@ -1283,6 +1379,55 @@ export default function App() {
                   </div>
                   
                   <div className="space-y-3">
+                    {/* Presets */}
+                    <div className="flex flex-col gap-2 bg-black/5 p-2 border border-black/20">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold uppercase">Presets</label>
+                        {savingPresetFor !== channelName && (
+                          <button 
+                            onClick={() => { setSavingPresetFor(channelName); setNewPresetName(''); }}
+                            className="text-[9px] font-bold px-1.5 py-0.5 border border-black hover:bg-black hover:text-white transition-colors"
+                          >
+                            SAVE
+                          </button>
+                        )}
+                      </div>
+                      
+                      {savingPresetFor === channelName ? (
+                        <div className="flex items-center gap-1">
+                          <input 
+                            autoFocus
+                            value={newPresetName}
+                            onChange={(e) => setNewPresetName(e.target.value)}
+                            placeholder="Preset name..."
+                            className="flex-1 text-xs px-1 py-0.5 border border-black outline-none"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSavePreset(channelName);
+                              if (e.key === 'Escape') setSavingPresetFor(null);
+                            }}
+                          />
+                          <button onClick={() => handleSavePreset(channelName)} className="p-1 hover:text-green-600"><Check size={14}/></button>
+                          <button onClick={() => setSavingPresetFor(null)} className="p-1 hover:text-red-600"><X size={14}/></button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <select 
+                            value=""
+                            onChange={(e) => loadPreset(channelName, e.target.value)}
+                            className="flex-1 text-xs px-1 py-0.5 border border-black bg-white outline-none cursor-pointer disabled:opacity-50"
+                            disabled={Object.keys(presets).length === 0}
+                          >
+                            <option value="" disabled>
+                              {Object.keys(presets).length === 0 ? 'No presets saved' : 'Load preset...'}
+                            </option>
+                            {Object.keys(presets).map(p => (
+                              <option key={p} value={p}>{p}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] font-bold uppercase">Oscillator Type</label>
                       <select 
@@ -1618,6 +1763,14 @@ export default function App() {
                   </div>
                   <p className="mt-4 text-xs opacity-70 leading-relaxed">
                     The engine defines the core sound synthesis for each channel. Each channel uses a specific oscillator type (Square, Sawtooth, Sine) and optional octave shifting to create the unique Chip-Tune sound.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-lg font-black uppercase mb-2">Downloading & Exporting</h3>
+                  <p className="text-sm leading-relaxed">
+                    You can download your song to your device by clicking the <strong>Download</strong> icon in the top navigation bar. 
+                    Currently, the song is exported as a <strong>JSON project file</strong>. This file contains all your notes, patterns, and instrument settings, allowing you to load it back into the app later.
                   </p>
                 </section>
 

@@ -1,4 +1,4 @@
-import { SongData, Percussion, ChannelConfig, ReverbConfig } from './types';
+import { SongData, Percussion, ChannelConfig, ReverbConfig, Section } from './types';
 
 class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -87,12 +87,14 @@ class AudioEngine {
     return impulse;
   }
 
-  public setReverb(config?: ReverbConfig) {
+  public setReverb(config?: ReverbConfig, time?: number) {
     this.initContext();
     if (!this.ctx || !this.reverbNode || !this.reverbGain) return;
 
+    const t = time !== undefined ? time : this.ctx.currentTime;
+
     if (!config) {
-      this.reverbGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      this.reverbGain.gain.setTargetAtTime(0, t, 0.05);
       return;
     }
 
@@ -106,7 +108,7 @@ class AudioEngine {
     }
 
     const wetVolume = config.wet_volume !== undefined ? config.wet_volume : 0.2;
-    this.reverbGain.gain.setTargetAtTime(wetVolume, this.ctx.currentTime, 0.05);
+    this.reverbGain.gain.setTargetAtTime(wetVolume, t, 0.05);
   }
 
   public get state() {
@@ -309,6 +311,205 @@ class AudioEngine {
     
     if (this.reverbNode) {
       gain.connect(this.reverbNode);
+    }
+  }
+
+  private resolveTargetSection(section: Section, allSections: Section[]): Section {
+    if (!section.reference_id) return section;
+    const target = allSections.find(s => s.id === section.reference_id);
+    if (!target) return section;
+    if (target.reference_id && target.reference_id !== target.id) {
+       return this.resolveTargetSection(target, allSections);
+    }
+    return target;
+  }
+
+  private scheduleNoteOffline(song: SongData, step: number, sectionIdx: number, time: number, stepDurationMs: number, mutedChannels: boolean[]) {
+    const section = song.sections[sectionIdx];
+    const targetSection = this.resolveTargetSection(section, song.sections);
+    const row = targetSection.rows[step];
+    if (!row) return;
+
+    const reverbConfig = section.reverb_override || targetSection.reverb_override || song.reverb;
+    this.setReverb(reverbConfig, time);
+    
+    const volumeScale = section.volume_scale || 1;
+    const channelKeys = Object.keys(song.channels);
+
+    for (let i = 0; i < 3; i++) {
+      if (row[i] !== '-' && channelKeys[i] && !mutedChannels[i]) {
+        const freq = song.note_frequencies_hz[row[i]];
+        let channelConfig = song.channels[channelKeys[i]];
+        
+        const override = section.channel_overrides?.[channelKeys[i]] || targetSection.channel_overrides?.[channelKeys[i]];
+        if (override) {
+          channelConfig = {
+            ...channelConfig,
+            ...override,
+            envelope: {
+              ...channelConfig.envelope,
+              ...(override.envelope || {})
+            }
+          };
+        }
+
+        if (freq && channelConfig) {
+          const duration = stepDurationMs * (channelConfig.note_duration_steps || 1);
+          
+          let effects: any = undefined;
+          const activeEffects = (section.section_effects || targetSection.section_effects || []).filter(e => 
+            e.channel === channelKeys[i] && 
+            step >= e.row_start && 
+            (e.row_end === undefined || step <= e.row_end)
+          );
+
+          if (activeEffects.length > 0) {
+            effects = {};
+            for (const effect of activeEffects) {
+              if (effect.effect === 'portamento' && effect.target_note) {
+                const targetFreq = song.note_frequencies_hz[effect.target_note];
+                if (targetFreq) {
+                  effects.portamento = {
+                    targetFreq,
+                    durationMs: (effect.duration_steps || 1) * stepDurationMs
+                  };
+                }
+              } else if (effect.effect === 'filter_sweep' && effect.type && effect.start_hz !== undefined && effect.end_hz !== undefined) {
+                const sweepStartTime = time - (step - effect.row_start) * (stepDurationMs / 1000);
+                const sweepEndTime = sweepStartTime + ((effect.row_end !== undefined ? effect.row_end : targetSection.rows.length - 1) - effect.row_start + 1) * (stepDurationMs / 1000);
+                effects.filterSweep = {
+                  type: effect.type as BiquadFilterType,
+                  startHz: effect.start_hz,
+                  endHz: effect.end_hz,
+                  sweepStartTime,
+                  sweepEndTime
+                };
+              }
+            }
+          }
+
+          this.playNote(freq, channelConfig, time, duration, volumeScale, effects);
+        }
+      }
+    }
+
+    if (row[3] !== '-' && !mutedChannels[3]) {
+      const perc = song.perc_types[row[3]];
+      if (perc) {
+        const percChannelConfig = song.channels['percussion'];
+        this.playPercussion(perc, time, song, volumeScale, percChannelConfig?.panning);
+      }
+    }
+  }
+
+  private audioBufferToWav(buffer: AudioBuffer): Blob {
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const format = 1; // PCM
+    const bitDepth = 16;
+    
+    const bytesPerSample = bitDepth / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    
+    const dataByteCount = buffer.length * blockAlign;
+    const bufferLength = 44 + dataByteCount;
+    const arrayBuffer = new ArrayBuffer(bufferLength);
+    const view = new DataView(arrayBuffer);
+    
+    const writeString = (view: DataView, offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+    
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + dataByteCount, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, format, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataByteCount, true);
+    
+    let offset = 44;
+    const channels = [];
+    for (let i = 0; i < numChannels; i++) {
+      channels.push(buffer.getChannelData(i));
+    }
+    
+    for (let i = 0; i < buffer.length; i++) {
+      for (let channel = 0; channel < numChannels; channel++) {
+        let sample = channels[channel][i];
+        sample = Math.max(-1, Math.min(1, sample));
+        sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        view.setInt16(offset, sample, true);
+        offset += 2;
+      }
+    }
+    
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
+  }
+
+  public async exportWav(song: SongData, totalDurationSeconds: number, mutedChannels: boolean[]): Promise<Blob> {
+    const sampleRate = 44100;
+    const length = Math.ceil(sampleRate * (totalDurationSeconds + 2.0)); // 2 seconds tail for reverb
+    const offlineCtx = new OfflineAudioContext(2, length, sampleRate);
+    
+    const oldCtx = this.ctx;
+    const oldMasterGain = this.masterGain;
+    const oldReverbNode = this.reverbNode;
+    const oldReverbGain = this.reverbGain;
+    const oldNoiseBuffer = this.noiseBuffer;
+    const oldCurrentReverbConfig = this.currentReverbConfig;
+    
+    try {
+      this.ctx = offlineCtx as any;
+      this.masterGain = offlineCtx.createGain();
+      this.masterGain.connect(offlineCtx.destination);
+      
+      const noiseBufferSize = 2 * sampleRate;
+      this.noiseBuffer = offlineCtx.createBuffer(1, noiseBufferSize, sampleRate);
+      const output = this.noiseBuffer.getChannelData(0);
+      for (let i = 0; i < noiseBufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      
+      this.reverbNode = offlineCtx.createConvolver();
+      this.reverbGain = offlineCtx.createGain();
+      this.reverbGain.gain.value = 0;
+      this.reverbNode.connect(this.reverbGain);
+      this.reverbGain.connect(this.masterGain);
+      
+      this.currentReverbConfig = '';
+
+      let currentTime = 0;
+      for (let sectionIdx = 0; sectionIdx < song.sections.length; sectionIdx++) {
+        const section = song.sections[sectionIdx];
+        const targetSection = this.resolveTargetSection(section, song.sections);
+        const activeTempo = section.tempo || song.tempo;
+        const secondsPerStep = 60 / (activeTempo * 4);
+        const stepDurationMs = secondsPerStep * 1000;
+
+        for (let step = 0; step < targetSection.rows.length; step++) {
+          this.scheduleNoteOffline(song, step, sectionIdx, currentTime, stepDurationMs, mutedChannels);
+          currentTime += secondsPerStep;
+        }
+      }
+
+      const renderedBuffer = await offlineCtx.startRendering();
+      return this.audioBufferToWav(renderedBuffer);
+    } finally {
+      this.ctx = oldCtx;
+      this.masterGain = oldMasterGain;
+      this.reverbNode = oldReverbNode;
+      this.reverbGain = oldReverbGain;
+      this.noiseBuffer = oldNoiseBuffer;
+      this.currentReverbConfig = oldCurrentReverbConfig;
     }
   }
 
